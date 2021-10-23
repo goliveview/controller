@@ -62,7 +62,7 @@ type SessionStore interface {
 }
 
 type Session interface {
-	ChangeFragment(turboStream *TurboStream, data M)
+	ChangePartial(turboStream *TurboStream, data M)
 	ChangeDataset(target string, data M)
 	ChangeClassList(target string, classList map[string]bool)
 	Flash(duration time.Duration, data M)
@@ -194,7 +194,7 @@ func (s session) render(turboStream *TurboStream, data M) {
 	}
 }
 
-func (s session) ChangeFragment(turboStream *TurboStream, data M) {
+func (s session) ChangePartial(turboStream *TurboStream, data M) {
 	s.render(turboStream, data)
 }
 

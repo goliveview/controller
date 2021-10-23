@@ -32,6 +32,7 @@ type controlOpt struct {
 	subscribeTopicFunc   func(r *http.Request) *string
 	upgrader             websocket.Upgrader
 	enableHTMLFormatting bool
+	disableTemplateCache bool
 }
 
 type Option func(*controlOpt)
@@ -59,6 +60,13 @@ func EnableHTMLFormatting() Option {
 		o.enableHTMLFormatting = true
 	}
 }
+
+func DisableTemplateCache() Option {
+	return func(o *controlOpt) {
+		o.disableTemplateCache = true
+	}
+}
+
 func Websocket(name *string, options ...Option) Controller {
 	if name == nil {
 		panic("controller name is required")
@@ -192,50 +200,58 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 		option(o)
 	}
 
-	// layout
-	files := []string{o.layout}
-	// global partials
-	for _, p := range o.partials {
-		files = append(files, find(p, o.extensions)...)
-	}
-
-	// page and its partials
-	files = append(files, find(page, o.extensions)...)
-	// contains: 1. layout 2. page  3. partials
-	pageTemplate, err := template.New("").Funcs(o.funcMap).ParseFiles(files...)
-	if err != nil {
-		panic(fmt.Errorf("error parsing files err %v", err))
-	}
-
-	if ct := pageTemplate.Lookup(o.layoutContentName); ct == nil {
-		panic(fmt.Errorf("err looking up layoutContent: the layout %s expects a template named %s",
-			o.layout, o.layoutContentName))
-	}
-
-	if err != nil {
-		panic(err)
-	}
+	var pageTemplate *template.Template
 	var errorTemplate *template.Template
-	if o.errorPage != "" {
+	var err error
+
+	parseTemplates := func() {
 		// layout
-		errorFiles := []string{o.layout}
+		files := []string{o.layout}
 		// global partials
 		for _, p := range o.partials {
-			errorFiles = append(errorFiles, find(p, o.extensions)...)
-		}
-		// error page and its partials
-		errorFiles = append(errorFiles, find(page, o.extensions)...)
-		// contains: 1. layout 2. page  3. partials
-		errorTemplate, err = template.New("").Funcs(o.funcMap).ParseFiles(errorFiles...)
-		if err != nil {
-			panic(fmt.Errorf("error parsing error page template err %v", err))
+			files = append(files, find(p, o.extensions)...)
 		}
 
-		if ct := errorTemplate.Lookup(o.layoutContentName); ct == nil {
+		// page and its partials
+		files = append(files, find(page, o.extensions)...)
+		// contains: 1. layout 2. page  3. partials
+		pageTemplate, err = template.New("").Funcs(o.funcMap).ParseFiles(files...)
+		if err != nil {
+			panic(fmt.Errorf("error parsing files err %v", err))
+		}
+
+		if ct := pageTemplate.Lookup(o.layoutContentName); ct == nil {
 			panic(fmt.Errorf("err looking up layoutContent: the layout %s expects a template named %s",
 				o.layout, o.layoutContentName))
 		}
+
+		if err != nil {
+			panic(err)
+		}
+
+		if o.errorPage != "" {
+			// layout
+			errorFiles := []string{o.layout}
+			// global partials
+			for _, p := range o.partials {
+				errorFiles = append(errorFiles, find(p, o.extensions)...)
+			}
+			// error page and its partials
+			errorFiles = append(errorFiles, find(page, o.extensions)...)
+			// contains: 1. layout 2. page  3. partials
+			errorTemplate, err = template.New("").Funcs(o.funcMap).ParseFiles(errorFiles...)
+			if err != nil {
+				panic(fmt.Errorf("error parsing error page template err %v", err))
+			}
+
+			if ct := errorTemplate.Lookup(o.layoutContentName); ct == nil {
+				panic(fmt.Errorf("err looking up layoutContent: the layout %s expects a template named %s",
+					o.layout, o.layoutContentName))
+			}
+		}
 	}
+
+	parseTemplates()
 
 	mountData := make(map[string]interface{})
 	status := 200
@@ -251,6 +267,10 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 				`<div style="text-align:center"><h1>%d</h1></div>
 <div style="text-align:center"><a href="javascript:history.back()">back</a></div>`, status)))
 			return
+		}
+
+		if wc.disableTemplateCache {
+			parseTemplates()
 		}
 
 		err = pageTemplate.ExecuteTemplate(w, filepath.Base(o.layout), mountData)
@@ -312,6 +332,10 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 			if !ok {
 				log.Printf("err: no handler found for event %s\n", event.ID)
 				continue
+			}
+
+			if wc.disableTemplateCache {
+				parseTemplates()
 			}
 
 			sess := session{
