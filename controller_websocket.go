@@ -34,32 +34,32 @@ type controlOpt struct {
 	enableHTMLFormatting bool
 }
 
-type ControllerOption func(*controlOpt)
+type Option func(*controlOpt)
 
-func WithRequestContext(f func(r *http.Request) context.Context) ControllerOption {
+func WithRequestContext(f func(r *http.Request) context.Context) Option {
 	return func(o *controlOpt) {
 		o.requestContextFunc = f
 	}
 }
 
-func WithSubscribeTopic(f func(r *http.Request) *string) ControllerOption {
+func WithSubscribeTopic(f func(r *http.Request) *string) Option {
 	return func(o *controlOpt) {
 		o.subscribeTopicFunc = f
 	}
 }
 
-func WithUpgrader(upgrader websocket.Upgrader) ControllerOption {
+func WithUpgrader(upgrader websocket.Upgrader) Option {
 	return func(o *controlOpt) {
 		o.upgrader = upgrader
 	}
 }
 
-func EnableHTMLFormatting() ControllerOption {
+func EnableHTMLFormatting() Option {
 	return func(o *controlOpt) {
 		o.enableHTMLFormatting = true
 	}
 }
-func Websocket(name *string, options ...ControllerOption) Controller {
+func Websocket(name *string, options ...Option) Controller {
 	if name == nil {
 		panic("controller name is required")
 	}
@@ -296,21 +296,21 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 				break loop
 			}
 
-			changeRequest := new(ChangeRequest)
-			err = json.NewDecoder(bytes.NewReader(message)).Decode(changeRequest)
+			event := new(Event)
+			err = json.NewDecoder(bytes.NewReader(message)).Decode(event)
 			if err != nil {
-				log.Printf("err: parsing changeRequest, msg %s \n", string(message))
+				log.Printf("err: parsing event, msg %s \n", string(message))
 				continue
 			}
 
-			if changeRequest.ID == "" {
-				log.Printf("err: changeRequest %v, field changeRequest.id is required\n", changeRequest)
+			if event.ID == "" {
+				log.Printf("err: event %v, field event.id is required\n", event)
 				continue
 			}
 
-			changeRequestHandler, ok := o.changeRequestHandlers[changeRequest.ID]
+			eventHandler, ok := o.eventHandlers[event.ID]
 			if !ok {
-				log.Printf("err: no handler found for changeRequest %s\n", changeRequest.ID)
+				log.Printf("err: no handler found for event %s\n", event.ID)
 				continue
 			}
 
@@ -319,14 +319,15 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 				conns:                wc.getTopicConnections(*topic),
 				store:                store,
 				rootTemplate:         pageTemplate,
-				changeRequest:        *changeRequest,
+				event:                *event,
 				temporaryKeys:        []string{"action", "target", "targets", "template"},
 				enableHTMLFormatting: wc.enableHTMLFormatting,
+				requestContext:       ctx,
 			}
 			sess.unsetError()
-			err = changeRequestHandler(ctx, *changeRequest, sess)
+			err = eventHandler(sess)
 			if err != nil {
-				log.Printf("%s: err: %v\n", changeRequest.ID, err)
+				log.Printf("%s: err: %v\n", event.ID, err)
 				userMessage := "internal error"
 				if userError := errors.Unwrap(err); userError != nil {
 					userMessage = userError.Error()

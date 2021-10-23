@@ -21,14 +21,14 @@ type OnMount func(r *http.Request) (int, M)
 type ViewOption func(opt *viewOpt)
 
 type viewOpt struct {
-	errorPage             string
-	layout                string
-	layoutContentName     string
-	partials              []string
-	extensions            []string
-	funcMap               template.FuncMap
-	onMountFunc           OnMount
-	changeRequestHandlers map[string]ChangeRequestHandler
+	errorPage         string
+	layout            string
+	layoutContentName string
+	partials          []string
+	extensions        []string
+	funcMap           template.FuncMap
+	onMountFunc       OnMount
+	eventHandlers     map[string]EventHandler
 }
 
 func WithLayout(layout string) ViewOption {
@@ -73,9 +73,9 @@ func WithErrorPage(errorPage string) ViewOption {
 	}
 }
 
-func WithChangeRequestHandlers(changeRequestHandlers map[string]ChangeRequestHandler) ViewOption {
+func WithEventHandlers(eventHandlers map[string]EventHandler) ViewOption {
 	return func(o *viewOpt) {
-		o.changeRequestHandlers = changeRequestHandlers
+		o.eventHandlers = eventHandlers
 	}
 }
 

@@ -41,50 +41,20 @@ var actions = map[string]int{
 
 type M map[string]interface{}
 
-type ChangeRequest struct {
-	ID       string          `json:"id"`
-	Params   json.RawMessage `json:"params"`
-	Action   ActionType      `json:"action"`
-	Target   string          `json:"target,omitempty"`
-	Targets  string          `json:"targets,omitempty"`
-	Template string          `json:"template"`
+type TurboStream struct {
+	Action   ActionType `json:"action"`
+	Target   string     `json:"target,omitempty"`
+	Targets  string     `json:"targets,omitempty"`
+	Template string     `json:"template"`
 }
 
-func (c ChangeRequest) DecodeParams(v interface{}) error {
-	return json.NewDecoder(bytes.NewReader(c.Params)).Decode(v)
+type Event struct {
+	ID     string          `json:"id"`
+	Params json.RawMessage `json:"params"`
+	*TurboStream
 }
 
-func ChangeTarget(action ActionType, target, template string) M {
-	return M{
-		"action":   action,
-		"target":   target,
-		"template": template,
-	}
-}
-
-func ChangeTargets(action ActionType, targets, template string) M {
-	return M{
-		"action":   action,
-		"targets":  targets,
-		"template": template,
-	}
-}
-
-func changeTargetFromReq(c ChangeRequest) M {
-	return M{
-		"action":   c.Action,
-		"target":   c.Target,
-		"template": c.Template,
-	}
-}
-
-func changeTargetsFromReq(c ChangeRequest) M {
-	return M{
-		"action":   c.Action,
-		"targets":  c.Targets,
-		"template": c.Template,
-	}
-}
+type EventHandler func(ctx Context) error
 
 type SessionStore interface {
 	Set(m M) error
@@ -92,21 +62,34 @@ type SessionStore interface {
 }
 
 type Session interface {
-	Change(changeset M)
-	Flash(duration time.Duration, changeset M)
+	ChangeFragment(turboStream *TurboStream, data M)
+	ChangeDataset(target string, data M)
+	ChangeClassList(target string, classList map[string]bool)
+	Flash(duration time.Duration, data M)
 	Temporary(keys ...string)
 	SessionStore
+}
+
+type Context interface {
+	Event() Event
+	RequestContext() context.Context
+	Session
+}
+
+func (c Event) DecodeParams(v interface{}) error {
+	return json.NewDecoder(bytes.NewReader(c.Params)).Decode(v)
 }
 
 type session struct {
 	rootTemplate         *template.Template
 	topic                string
-	changeRequest        ChangeRequest
+	event                Event
 	conns                map[string]*websocket.Conn
 	messageType          int
 	store                SessionStore
 	temporaryKeys        []string
 	enableHTMLFormatting bool
+	requestContext       context.Context
 }
 
 func (s session) setError(userMessage string, errs ...error) {
@@ -121,48 +104,71 @@ func (s session) setError(userMessage string, errs ...error) {
 		log.Printf("err: %v, errors: %v\n", userMessage, strings.Join(errstrs, ","))
 	}
 
-	s.write(Replace, "glv-error", "", "glv-error",
-		M{
-			"error": userMessage,
-		})
+	s.write(
+		&TurboStream{
+			Action:   Replace,
+			Target:   "glv-error",
+			Template: "glv-error",
+		},
+		M{"error": userMessage})
+
 }
 
 func (s session) unsetError() {
-	s.write(Replace, "glv-error", "", "glv-error", nil)
+	s.write(&TurboStream{
+		Action:   Replace,
+		Target:   "glv-error",
+		Template: "glv-error",
+	}, nil)
 }
 
-func (s session) write(action ActionType, target, targets, template string, data M) {
-	if action == "" {
-		log.Printf("err action is empty\n")
+func (s session) write(turboStream *TurboStream, data M) {
+	if turboStream == nil {
+		log.Printf("turbo stream is nil for event %v\n", s.event)
+		return
+	}
+	if turboStream.Action == "" {
+		log.Printf("err action is empty for event %v\n", s.event)
 		return
 	}
 	// stream response
-	if target == "" && targets == "" {
-		log.Printf("err target/targets %s/%s empty for changeRequest %+v\n", target, targets, s.changeRequest)
+	if turboStream.Target == "" && turboStream.Targets == "" {
+		log.Printf("err target or targets %s empty for event %+v\n", turboStream, s.event)
 		return
 	}
 	var buf bytes.Buffer
-	if template != "" && action != Remove {
-		err := s.rootTemplate.ExecuteTemplate(&buf, template, data)
+	if turboStream.Template != "" && turboStream.Action != Remove {
+		err := s.rootTemplate.ExecuteTemplate(&buf, turboStream.Template, data)
 		if err != nil {
-			log.Printf("err %v,while executing template for changeRequest %+v\n", err, s.changeRequest)
+			log.Printf("err %v,while executing template for event %+v\n", err, s.event)
 			return
 		}
 	}
 	html := buf.String()
 	var message string
-	if targets != "" {
-		message = fmt.Sprintf(turboTargetsWrapper, action, targets, html)
+	if turboStream.Targets != "" {
+		message = fmt.Sprintf(turboTargetsWrapper, turboStream.Action, turboStream.Targets, html)
 	} else {
-		message = fmt.Sprintf(turboTargetWrapper, action, target, html)
+		message = fmt.Sprintf(turboTargetWrapper, turboStream.Action, turboStream.Target, html)
 	}
 
 	if s.enableHTMLFormatting {
 		message = gohtml.Format(message)
 	}
 
+	s.writePreparedMessage([]byte(message))
+
+}
+
+func (s session) writePreparedMessage(message []byte) {
+	preparedMessage, err := websocket.NewPreparedMessage(s.messageType, []byte(message))
+	if err != nil {
+		log.Printf("err preparing message %v\n", err)
+		return
+	}
+
 	for topic, conn := range s.conns {
-		err := conn.WriteMessage(s.messageType, []byte(message))
+		err := conn.WritePreparedMessage(preparedMessage)
 		if err != nil {
 			log.Printf("err writing message for topic:%v, %v, closing conn", topic, err)
 			conn.Close()
@@ -171,105 +177,140 @@ func (s session) write(action ActionType, target, targets, template string, data
 	}
 }
 
-func (s session) Temporary(keys ...string) {
-	s.temporaryKeys = append(s.temporaryKeys, keys...)
-}
-
-func (s session) change(changeset M) {
-	// calculate change
-	var changeTargets M
-	if s.changeRequest.Targets != "" {
-		changeTargets = changeTargetsFromReq(s.changeRequest)
-	} else {
-		changeTargets = changeTargetFromReq(s.changeRequest)
+func (s session) render(turboStream *TurboStream, data M) {
+	if turboStream == nil && s.event.TurboStream != nil {
+		turboStream = s.event.TurboStream
 	}
-
-	mergedChangeset := make(M)
-
-	// from request
-	for k, v := range changeTargets {
-		mergedChangeset[k] = v
-	}
-
-	// from handler
-	for k, v := range changeset {
-		mergedChangeset[k] = v
-	}
-
-	var action ActionType
-	var target, targets, template string
-	data := make(M)
-
-	for k, v := range mergedChangeset {
-
-		if k == "action" {
-			if a, ok := v.(ActionType); ok {
-				action = a
-				continue
-			}
-
-			if a, ok := v.(string); ok {
-				if _, ok := actions[a]; ok {
-					action = ActionType(a)
-				}
-				continue
-			}
-
-		}
-		if k == "target" {
-			target = v.(string)
-			continue
-		}
-		if k == "targets" {
-			targets = v.(string)
-			continue
-		}
-		if k == "template" {
-			template = v.(string)
-			continue
-		}
-		data[k] = v
-	}
-
-	s.write(action, target, targets, template, data)
+	s.write(turboStream, data)
 
 	// delete keys which are marked temporary
 	for _, t := range s.temporaryKeys {
-		delete(changeset, t)
+		delete(data, t)
 	}
 	// update store
-	err := s.store.Set(changeset)
+	err := s.store.Set(data)
 	if err != nil {
 		log.Printf("error store.set %v\n", err)
 	}
 }
 
-func (s session) Flash(duration time.Duration, changeset M) {
-	nilDataChangeSet := ChangeTarget(Append, "glv-flash", "glv-flash-message")
-	if _, ok := changeset["action"]; !ok {
-		changeset["action"] = nilDataChangeSet["action"]
+func (s session) ChangeFragment(turboStream *TurboStream, data M) {
+	s.render(turboStream, data)
+}
+
+// https://github.com/siongui/userpages/blob/master/content/code/go/kebab-case-to-camelCase/converter.go
+func kebabToCamelCase(kebab string) (camelCase string) {
+	isToUpper := false
+	for _, runeValue := range kebab {
+		if isToUpper {
+			camelCase += strings.ToUpper(string(runeValue))
+			isToUpper = false
+		} else {
+			if runeValue == '-' {
+				isToUpper = true
+			} else {
+				camelCase += string(runeValue)
+			}
+		}
 	}
-	if _, ok := changeset["target"]; !ok {
-		changeset["target"] = nilDataChangeSet["target"]
+	return
+}
+
+func (s session) ChangeDataset(target string, data M) {
+	datasetChange := make(map[string]interface{})
+	datasetChange["target"] = target
+	dataset := make(map[string]interface{})
+	for k, v := range data {
+		if strings.HasPrefix(k, "data-") {
+			k = strings.TrimPrefix(k, "data-")
+		}
+		dataset[kebabToCamelCase(k)] = v
 	}
-	if _, ok := changeset["template"]; !ok {
-		changeset["template"] = nilDataChangeSet["template"]
+
+	datasetChange["dataset"] = dataset
+
+	message, err := json.Marshal(&datasetChange)
+	if err != nil {
+		log.Printf("err marshalling datasetChange %v\n", err)
+		return
+	}
+
+	s.writePreparedMessage(message)
+
+	// delete keys which are marked temporary
+	for _, t := range s.temporaryKeys {
+		delete(data, t)
+	}
+	// update store
+	err = s.store.Set(data)
+	if err != nil {
+		log.Printf("error store.set %v\n", err)
+	}
+}
+
+func (s session) ChangeClassList(target string, data map[string]bool) {
+	classListChange := make(map[string]interface{})
+	classListChange["target"] = target
+	classList := make(map[string]interface{})
+	for k, v := range data {
+		classList[k] = v
+	}
+
+	classListChange["classList"] = classList
+	message, err := json.Marshal(&classListChange)
+	if err != nil {
+		log.Printf("err marshalling datasetChange %v\n", err)
+		return
+	}
+
+	s.writePreparedMessage(message)
+
+	// delete keys which are marked temporary
+	for _, t := range s.temporaryKeys {
+		delete(data, t)
+	}
+	// update store
+	datax := make(map[string]interface{})
+	for k, v := range data {
+		datax[k] = v
+	}
+	err = s.store.Set(datax)
+	if err != nil {
+		log.Printf("error store.set %v\n", err)
+	}
+}
+
+func (s session) Event() Event {
+	return s.event
+}
+
+func (s session) RequestContext() context.Context {
+	return s.requestContext
+}
+
+func (s session) Temporary(keys ...string) {
+	s.temporaryKeys = append(s.temporaryKeys, keys...)
+}
+
+func (s session) Flash(duration time.Duration, data M) {
+	turboStream := &TurboStream{
+		Action:   Append,
+		Target:   "glv-flash",
+		Targets:  "",
+		Template: "glv-flash-message",
 	}
 
 	flashID := shortuuid.New()
-	changeset["flash_id"] = flashID
+	data["flash_id"] = flashID
 
-	s.change(changeset)
-	go func(target string, changeset M) {
+	s.render(turboStream, data)
+	go func() {
 		time.Sleep(duration)
-		nilDataChangeSet["action"] = Remove
-		nilDataChangeSet["target"] = flashID
-		s.change(nilDataChangeSet)
-	}(flashID, nilDataChangeSet)
-}
-
-func (s session) Change(changeset M) {
-	s.change(changeset)
+		turboStream.Action = Remove
+		s.render(turboStream, M{
+			"flash_id": flashID,
+		})
+	}()
 }
 
 func (s session) Set(m M) error {
@@ -279,8 +320,6 @@ func (s session) Set(m M) error {
 func (s session) Get(key string) (interface{}, bool) {
 	return s.store.Get(key)
 }
-
-type ChangeRequestHandler func(ctx context.Context, req ChangeRequest, session Session) error
 
 var turboTargetWrapper = `{
 							"message":
