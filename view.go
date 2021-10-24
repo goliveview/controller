@@ -1,11 +1,20 @@
 package controller
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"html/template"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/Masterminds/sprig"
+	"github.com/lithammer/shortuuid/v3"
 )
 
 func contains(arr []string, s string) bool {
@@ -19,6 +28,10 @@ func contains(arr []string, s string) bool {
 
 type OnMount func(r *http.Request) (int, M)
 type ViewOption func(opt *viewOpt)
+type ViewHandler interface {
+	OnMount(r *http.Request) (int, M)
+	EventHandler(ctx Context) error
+}
 
 type viewOpt struct {
 	errorPage         string
@@ -29,6 +42,7 @@ type viewOpt struct {
 	funcMap           template.FuncMap
 	onMountFunc       OnMount
 	eventHandlers     map[string]EventHandler
+	viewHandler       ViewHandler
 }
 
 func WithLayout(layout string) ViewOption {
@@ -79,6 +93,12 @@ func WithEventHandlers(eventHandlers map[string]EventHandler) ViewOption {
 	}
 }
 
+func WithViewHandler(viewHandler ViewHandler) ViewOption {
+	return func(o *viewOpt) {
+		o.viewHandler = viewHandler
+	}
+}
+
 func find(p string, extensions []string) []string {
 	var files []string
 
@@ -109,4 +129,212 @@ func find(p string, extensions []string) []string {
 	}
 
 	return files
+}
+
+func (wc *websocketController) NewView(page string, options ...ViewOption) http.HandlerFunc {
+	o := &viewOpt{
+		layout:            "./templates/layouts/index.html",
+		layoutContentName: "content",
+		partials:          []string{"./templates/partials"},
+		extensions:        []string{".html", ".tmpl"},
+		funcMap:           sprig.FuncMap(),
+	}
+	for _, option := range options {
+		option(o)
+	}
+
+	var pageTemplate *template.Template
+	var errorTemplate *template.Template
+	var err error
+
+	parseTemplates := func() {
+		// layout
+		commonFiles := []string{o.layout}
+		// global partials
+		for _, p := range o.partials {
+			commonFiles = append(commonFiles, find(p, o.extensions)...)
+		}
+		layoutTemplate := template.Must(template.New("").Funcs(o.funcMap).ParseFiles(commonFiles...))
+
+		pageTemplateCone := template.Must(layoutTemplate.Clone())
+		var pageFiles []string
+		// page and its partials
+		pageFiles = append(pageFiles, find(page, o.extensions)...)
+		// contains: 1. layout 2. page  3. partials
+		pageTemplate, err = pageTemplateCone.ParseFiles(pageFiles...)
+		if err != nil {
+			panic(fmt.Errorf("error parsing files err %v", err))
+		}
+
+		if ct := pageTemplate.Lookup(o.layoutContentName); ct == nil {
+			panic(fmt.Errorf("err looking up layoutContent: the layout %s expects a template named %s",
+				o.layout, o.layoutContentName))
+		}
+
+		if err != nil {
+			panic(err)
+		}
+
+		if o.errorPage != "" {
+			// layout
+			var errorFiles []string
+			errorTemplateCone := template.Must(layoutTemplate.Clone())
+			// error page and its partials
+			errorFiles = append(errorFiles, find(page, o.extensions)...)
+			// contains: 1. layout 2. page  3. partials
+			errorTemplate, err = errorTemplateCone.ParseFiles(errorFiles...)
+			if err != nil {
+				panic(fmt.Errorf("error parsing error page template err %v", err))
+			}
+
+			if ct := errorTemplate.Lookup(o.layoutContentName); ct == nil {
+				panic(fmt.Errorf("err looking up layoutContent: the layout %s expects a template named %s",
+					o.layout, o.layoutContentName))
+			}
+		}
+	}
+
+	parseTemplates()
+
+	mountData := make(map[string]interface{})
+	status := 200
+	renderPage := func(w http.ResponseWriter, r *http.Request) {
+		if o.viewHandler != nil {
+			status, mountData = o.viewHandler.OnMount(r)
+		} else if o.onMountFunc != nil {
+			status, mountData = o.onMountFunc(r)
+		}
+
+		w.WriteHeader(status)
+		if status > 299 {
+			// TODO: custom error page
+			w.Write([]byte(fmt.Sprintf(
+				`<div style="text-align:center"><h1>%d</h1></div>
+<div style="text-align:center"><a href="javascript:history.back()">back</a></div>`, status)))
+			return
+		}
+
+		if wc.disableTemplateCache {
+			parseTemplates()
+		}
+
+		err = pageTemplate.ExecuteTemplate(w, filepath.Base(o.layout), mountData)
+		if err != nil {
+			if errorTemplate != nil {
+				err = errorTemplate.ExecuteTemplate(w, filepath.Base(o.layout), nil)
+				if err != nil {
+					w.Write([]byte("something went wrong"))
+				}
+			} else {
+				w.Write([]byte("something went wrong"))
+			}
+		}
+	}
+
+	handleSocket := func(w http.ResponseWriter, r *http.Request, user int) {
+		ctx := r.Context()
+		if wc.requestContextFunc != nil {
+			ctx = wc.requestContextFunc(r)
+		}
+		var topic *string
+		if wc.subscribeTopicFunc != nil {
+			topic = wc.subscribeTopicFunc(r)
+		}
+
+		c, err := wc.upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+
+		connID := shortuuid.New()
+		store := wc.userSessions.GetOrCreate(user)
+		store.Set(mountData)
+		if topic != nil {
+			wc.addConnection(*topic, connID, c)
+		}
+	loop:
+		for {
+			mt, message, err := c.ReadMessage()
+			if err != nil {
+				log.Println("readx:", err)
+				break loop
+			}
+
+			event := new(Event)
+			err = json.NewDecoder(bytes.NewReader(message)).Decode(event)
+			if err != nil {
+				log.Printf("err: parsing event, msg %s \n", string(message))
+				continue
+			}
+
+			if event.ID == "" {
+				log.Printf("err: event %v, field event.id is required\n", event)
+				continue
+			}
+
+			sess := session{
+				messageType:          mt,
+				conns:                wc.getTopicConnections(*topic),
+				store:                store,
+				rootTemplate:         pageTemplate,
+				event:                *event,
+				temporaryKeys:        []string{"action", "target", "targets", "template"},
+				enableHTMLFormatting: wc.enableHTMLFormatting,
+				requestContext:       ctx,
+			}
+			if wc.disableTemplateCache {
+				parseTemplates()
+			}
+			sess.unsetError()
+
+			var eventHandlerErr error
+			if o.viewHandler != nil {
+				eventHandlerErr = o.viewHandler.EventHandler(sess)
+			} else {
+				eventHandler, ok := o.eventHandlers[event.ID]
+				if !ok {
+					log.Printf("err: no handler found for event %s\n", event.ID)
+					continue
+				}
+				eventHandlerErr = eventHandler(sess)
+			}
+
+			if eventHandlerErr != nil {
+				log.Printf("%s: err: %v\n", event.ID, eventHandlerErr)
+				userMessage := "internal error"
+				if userError := errors.Unwrap(eventHandlerErr); userError != nil {
+					userMessage = userError.Error()
+				}
+				sess.setError(userMessage, eventHandlerErr)
+			}
+		}
+
+		if topic != nil {
+			wc.removeConnection(*topic, connID)
+		}
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimSpace(wc.name)
+		wc.cookieStore.MaxAge(0)
+		cookieSession, _ := wc.cookieStore.Get(r, fmt.Sprintf("_glv_key_%s", name))
+		user := cookieSession.Values["user"]
+		if user == nil {
+			c := wc.userCount.incr()
+			cookieSession.Values["user"] = c
+			user = c
+		}
+
+		err := cookieSession.Save(r, w)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if r.Header.Get("Connection") == "Upgrade" && r.Header.Get("Upgrade") == "websocket" {
+			handleSocket(w, r, user.(int))
+		} else {
+			renderPage(w, r)
+		}
+	}
 }
