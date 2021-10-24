@@ -25,6 +25,7 @@ type controlOpt struct {
 	upgrader             websocket.Upgrader
 	enableHTMLFormatting bool
 	disableTemplateCache bool
+	debugLog             bool
 }
 
 type Option func(*controlOpt)
@@ -56,6 +57,12 @@ func EnableHTMLFormatting() Option {
 func DisableTemplateCache() Option {
 	return func(o *controlOpt) {
 		o.disableTemplateCache = true
+	}
+}
+
+func EnableDebugLog() Option {
+	return func(o *controlOpt) {
+		o.debugLog = true
 	}
 }
 

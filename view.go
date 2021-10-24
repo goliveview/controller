@@ -229,6 +229,10 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 				w.Write([]byte("something went wrong"))
 			}
 		}
+		if wc.debugLog {
+			mdata, _ := json.MarshalIndent(mountData, "", " ")
+			log.Printf("rendered page %+v, with data => \n %v\n", page, string(mdata))
+		}
 	}
 
 	handleSocket := func(w http.ResponseWriter, r *http.Request, user int) {
@@ -282,6 +286,7 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 				temporaryKeys:        []string{"action", "target", "targets", "template"},
 				enableHTMLFormatting: wc.enableHTMLFormatting,
 				requestContext:       ctx,
+				debugLog:             wc.debugLog,
 			}
 			if wc.disableTemplateCache {
 				parseTemplates()

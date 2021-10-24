@@ -54,6 +54,11 @@ type Event struct {
 	*TurboStream
 }
 
+func (e Event) String() string {
+	data, _ := json.MarshalIndent(e, "", " ")
+	return string(data)
+}
+
 type EventHandler func(ctx Context) error
 
 type SessionStore interface {
@@ -76,8 +81,8 @@ type Context interface {
 	Session
 }
 
-func (c Event) DecodeParams(v interface{}) error {
-	return json.NewDecoder(bytes.NewReader(c.Params)).Decode(v)
+func (e Event) DecodeParams(v interface{}) error {
+	return json.NewDecoder(bytes.NewReader(e.Params)).Decode(v)
 }
 
 type session struct {
@@ -90,6 +95,7 @@ type session struct {
 	temporaryKeys        []string
 	enableHTMLFormatting bool
 	requestContext       context.Context
+	debugLog             bool
 }
 
 func (s session) setError(userMessage string, errs ...error) {
@@ -142,6 +148,10 @@ func (s session) write(turboStream *TurboStream, data M) {
 		if err != nil {
 			log.Printf("err %v,while executing template for event %+v\n", err, s.event)
 			return
+		}
+		if s.debugLog {
+			mdata, _ := json.MarshalIndent(data, "", " ")
+			log.Printf("rendered turbo-stream %+v, with data => \n %v\n", turboStream, string(mdata))
 		}
 	}
 	html := buf.String()
