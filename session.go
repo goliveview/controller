@@ -4,54 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"html/template"
 	"log"
 	"strings"
-	"time"
-
-	"github.com/lithammer/shortuuid/v3"
 
 	"github.com/yosssi/gohtml"
 
 	"github.com/gorilla/websocket"
 )
 
-type ActionType string
-
-const (
-	Append  ActionType = "append"
-	Prepend ActionType = "prepend"
-	Replace ActionType = "replace"
-	Update  ActionType = "update"
-	Before  ActionType = "before"
-	After   ActionType = "after"
-	Remove  ActionType = "remove"
-)
-
-var actions = map[string]int{
-	"append":  0,
-	"prepend": 0,
-	"replace": 0,
-	"update":  0,
-	"before":  0,
-	"after":   0,
-	"remove":  0,
-}
-
 type M map[string]interface{}
 
-type TurboStream struct {
-	Action   ActionType `json:"action"`
-	Target   string     `json:"target,omitempty"`
-	Targets  string     `json:"targets,omitempty"`
-	Template string     `json:"template"`
-}
-
 type Event struct {
-	ID     string          `json:"id"`
-	Params json.RawMessage `json:"params"`
-	*TurboStream
+	ID       string          `json:"id"`
+	Query    string          `json:"query"`
+	Template string          `json:"template"`
+	Params   json.RawMessage `json:"params"`
 }
 
 func (e Event) String() string {
@@ -67,11 +35,9 @@ type SessionStore interface {
 }
 
 type Session interface {
-	ChangePartial(turboStream *TurboStream, data M)
-	//ChangeFragment(turboStream *TurboStream, data interface{})
 	ChangeDataset(target string, data M)
 	ChangeClassList(target string, classList map[string]bool)
-	Flash(duration time.Duration, data M)
+	Morph(query, template string, data M)
 	Temporary(keys ...string)
 	SessionStore
 }
@@ -111,63 +77,12 @@ func (s session) setError(userMessage string, errs ...error) {
 		log.Printf("err: %v, errors: %v\n", userMessage, strings.Join(errstrs, ","))
 	}
 
-	s.write(
-		&TurboStream{
-			Action:   Replace,
-			Target:   "glv-error",
-			Template: "glv-error",
-		},
-		M{"error": userMessage})
+	s.Morph("#glv-error", "glv-error", M{"error": userMessage})
 
 }
 
 func (s session) unsetError() {
-	s.write(&TurboStream{
-		Action:   Replace,
-		Target:   "glv-error",
-		Template: "glv-error",
-	}, nil)
-}
-
-func (s session) write(turboStream *TurboStream, data M) {
-	if turboStream == nil {
-		log.Printf("turbo stream is nil for event %v\n", s.event)
-		return
-	}
-	if turboStream.Action == "" {
-		log.Printf("err action is empty for event %v\n", s.event)
-		return
-	}
-	// stream response
-	if turboStream.Target == "" && turboStream.Targets == "" {
-		log.Printf("err target or targets %s empty for event %+v\n", turboStream, s.event)
-		return
-	}
-	var buf bytes.Buffer
-	if turboStream.Template != "" && turboStream.Action != Remove {
-		err := s.rootTemplate.ExecuteTemplate(&buf, turboStream.Template, data)
-		if err != nil {
-			log.Printf("err %v with data => \n %+v\n", err, getJSON(data))
-			return
-		}
-		if s.debugLog {
-			log.Printf("rendered turbo-stream %+v, with data => \n %+v\n", turboStream, getJSON(data))
-		}
-	}
-	html := buf.String()
-	var message string
-	if turboStream.Targets != "" {
-		message = fmt.Sprintf(turboTargetsWrapper, turboStream.Action, turboStream.Targets, html)
-	} else {
-		message = fmt.Sprintf(turboTargetWrapper, turboStream.Action, turboStream.Target, html)
-	}
-
-	if s.enableHTMLFormatting {
-		message = gohtml.Format(message)
-	}
-
-	s.writePreparedMessage([]byte(message))
-
+	s.Morph("#glv-error", "glv-error", nil)
 }
 
 func getJSON(data M) string {
@@ -194,68 +109,6 @@ func (s session) writePreparedMessage(message []byte) {
 		}
 	}
 }
-
-func (s session) render(turboStream *TurboStream, data M) {
-	if turboStream == nil && s.event.TurboStream != nil {
-		turboStream = s.event.TurboStream
-	}
-	s.write(turboStream, data)
-
-	// delete keys which are marked temporary
-	for _, t := range s.temporaryKeys {
-		delete(data, t)
-	}
-	// update store
-	err := s.store.Set(data)
-	if err != nil {
-		log.Printf("error store.set %v\n", err)
-	}
-}
-
-func (s session) ChangePartial(turboStream *TurboStream, data M) {
-	s.render(turboStream, data)
-}
-
-//var expectedDataErr = errors.New("expected struct, *struct or map[string]interface{}")
-//
-//func (s session) ChangeFragment(turboStream *TurboStream, data interface{}) {
-//	if data == nil {
-//		s.render(turboStream, M{})
-//	}
-//
-//	t := reflect.TypeOf(data)
-//	switch t.Kind() {
-//	case reflect.Map:
-//		switch v := data.(type) {
-//		case map[string]interface{}:
-//			s.render(turboStream, data.(map[string]interface{}))
-//		default:
-//			panic(fmt.Errorf("%v. got: %v", expectedDataErr, v))
-//		}
-//		return
-//	case reflect.Struct:
-//		ss := structs.New(data)
-//		ss.TagName = "json"
-//		s.render(turboStream, ss.Map())
-//		break
-//	case reflect.Ptr:
-//		v := reflect.ValueOf(data).Elem()
-//		// uninitialized zero value of a struct
-//		if v.Kind() == reflect.Invalid {
-//			panic(fmt.Errorf("%v. got: reflect.Invalid", expectedDataErr))
-//		}
-//
-//		if v.Kind() == reflect.Struct {
-//			ss := structs.New(data)
-//			ss.TagName = "json"
-//			s.render(turboStream, ss.Map())
-//			return
-//		}
-//	default:
-//		panic(fmt.Errorf("%v. got: %v", expectedDataErr, t.Kind()))
-//	}
-//
-//}
 
 // https://github.com/siongui/userpages/blob/master/content/code/go/kebab-case-to-camelCase/converter.go
 func kebabToCamelCase(kebab string) (camelCase string) {
@@ -339,6 +192,50 @@ func (s session) ChangeClassList(target string, data map[string]bool) {
 	}
 }
 
+func (s session) Morph(query, template string, data M) {
+	var buf bytes.Buffer
+
+	err := s.rootTemplate.ExecuteTemplate(&buf, template, data)
+	if err != nil {
+		log.Printf("err %v with data => \n %+v\n", err, getJSON(data))
+		return
+	}
+	if s.debugLog {
+		log.Printf("rendered template %+v, with data => \n %+v\n", template, getJSON(data))
+	}
+	html := buf.String()
+	if s.enableHTMLFormatting {
+		html = gohtml.Format(html)
+	}
+
+	buf.Reset()
+
+	morphData := map[string]interface{}{
+		"selectQuery": query,
+		"html":        html,
+	}
+
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(true)
+	err = enc.Encode(&morphData)
+	if err != nil {
+		log.Printf("err marshalling morphData %v\n", err)
+		return
+	}
+
+	s.writePreparedMessage(buf.Bytes())
+
+	// delete keys which are marked temporary
+	for _, t := range s.temporaryKeys {
+		delete(data, t)
+	}
+	// update store
+	err = s.store.Set(data)
+	if err != nil {
+		log.Printf("error store.set %v\n", err)
+	}
+}
+
 func (s session) Event() Event {
 	return s.event
 }
@@ -351,27 +248,6 @@ func (s session) Temporary(keys ...string) {
 	s.temporaryKeys = append(s.temporaryKeys, keys...)
 }
 
-func (s session) Flash(duration time.Duration, data M) {
-	turboStream := &TurboStream{
-		Action:   Append,
-		Target:   "glv-flash",
-		Targets:  "",
-		Template: "glv-flash-message",
-	}
-
-	flashID := shortuuid.New()
-	data["flash_id"] = flashID
-
-	s.render(turboStream, data)
-	go func() {
-		time.Sleep(duration)
-		turboStream.Action = Remove
-		s.render(turboStream, M{
-			"flash_id": flashID,
-		})
-	}()
-}
-
 func (s session) Set(m M) error {
 	return s.store.Set(m)
 }
@@ -379,21 +255,3 @@ func (s session) Set(m M) error {
 func (s session) Decode(key string, data interface{}) error {
 	return s.store.Decode(key, data)
 }
-
-var turboTargetWrapper = `{
-							"message":
-							  "<turbo-stream action="%s" target="%s">
-								<template>
-									%s
-								</template>
-							   </turbo-stream>"
-						  }`
-
-var turboTargetsWrapper = `{
-							"message":
-							  "<turbo-stream action="%s" targets="%s">
-								<template>
-									%s
-								</template>
-							   </turbo-stream>"
-						  }`
