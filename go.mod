@@ -4,6 +4,7 @@ go 1.17
 
 require (
 	github.com/Masterminds/sprig v2.22.0+incompatible
+	github.com/fatih/structs v1.1.0
 	github.com/gorilla/securecookie v1.1.1
 	github.com/gorilla/sessions v1.2.1
 	github.com/gorilla/websocket v1.4.2

@@ -68,6 +68,7 @@ type SessionStore interface {
 
 type Session interface {
 	ChangePartial(turboStream *TurboStream, data M)
+	//ChangeFragment(turboStream *TurboStream, data interface{})
 	ChangeDataset(target string, data M)
 	ChangeClassList(target string, classList map[string]bool)
 	Flash(duration time.Duration, data M)
@@ -146,12 +147,11 @@ func (s session) write(turboStream *TurboStream, data M) {
 	if turboStream.Template != "" && turboStream.Action != Remove {
 		err := s.rootTemplate.ExecuteTemplate(&buf, turboStream.Template, data)
 		if err != nil {
-			log.Printf("err %v,while executing template for event %+v\n", err, s.event)
+			log.Printf("err %v with data => \n %+v\n", err, getJSON(data))
 			return
 		}
 		if s.debugLog {
-			mdata, _ := json.MarshalIndent(data, "", " ")
-			log.Printf("rendered turbo-stream %+v, with data => \n %v\n", turboStream, string(mdata))
+			log.Printf("rendered turbo-stream %+v, with data => \n %+v\n", turboStream, getJSON(data))
 		}
 	}
 	html := buf.String()
@@ -168,6 +168,14 @@ func (s session) write(turboStream *TurboStream, data M) {
 
 	s.writePreparedMessage([]byte(message))
 
+}
+
+func getJSON(data M) string {
+	b, err := json.MarshalIndent(data, "", " ")
+	if err != nil {
+		return err.Error()
+	}
+	return string(b)
 }
 
 func (s session) writePreparedMessage(message []byte) {
@@ -207,6 +215,47 @@ func (s session) render(turboStream *TurboStream, data M) {
 func (s session) ChangePartial(turboStream *TurboStream, data M) {
 	s.render(turboStream, data)
 }
+
+//var expectedDataErr = errors.New("expected struct, *struct or map[string]interface{}")
+//
+//func (s session) ChangeFragment(turboStream *TurboStream, data interface{}) {
+//	if data == nil {
+//		s.render(turboStream, M{})
+//	}
+//
+//	t := reflect.TypeOf(data)
+//	switch t.Kind() {
+//	case reflect.Map:
+//		switch v := data.(type) {
+//		case map[string]interface{}:
+//			s.render(turboStream, data.(map[string]interface{}))
+//		default:
+//			panic(fmt.Errorf("%v. got: %v", expectedDataErr, v))
+//		}
+//		return
+//	case reflect.Struct:
+//		ss := structs.New(data)
+//		ss.TagName = "json"
+//		s.render(turboStream, ss.Map())
+//		break
+//	case reflect.Ptr:
+//		v := reflect.ValueOf(data).Elem()
+//		// uninitialized zero value of a struct
+//		if v.Kind() == reflect.Invalid {
+//			panic(fmt.Errorf("%v. got: reflect.Invalid", expectedDataErr))
+//		}
+//
+//		if v.Kind() == reflect.Struct {
+//			ss := structs.New(data)
+//			ss.TagName = "json"
+//			s.render(turboStream, ss.Map())
+//			return
+//		}
+//	default:
+//		panic(fmt.Errorf("%v. got: %v", expectedDataErr, t.Kind()))
+//	}
+//
+//}
 
 // https://github.com/siongui/userpages/blob/master/content/code/go/kebab-case-to-camelCase/converter.go
 func kebabToCamelCase(kebab string) (camelCase string) {

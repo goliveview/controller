@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Masterminds/sprig"
 	"github.com/lithammer/shortuuid/v3"
 )
 
@@ -137,7 +136,7 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 		layoutContentName: "content",
 		partials:          []string{"./templates/partials"},
 		extensions:        []string{".html", ".tmpl"},
-		funcMap:           sprig.FuncMap(),
+		funcMap:           DefaultFuncMap(),
 	}
 	for _, option := range options {
 		option(o)
@@ -196,7 +195,7 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 
 	parseTemplates()
 
-	mountData := make(map[string]interface{})
+	mountData := make(M)
 	status := 200
 	renderPage := func(w http.ResponseWriter, r *http.Request) {
 		if o.viewHandler != nil {
@@ -204,6 +203,13 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 		} else if o.onMountFunc != nil {
 			status, mountData = o.onMountFunc(r)
 		}
+		if mountData == nil {
+			mountData = make(M)
+		}
+
+		mountData["app_name"] = wc.name
+		mountData["errors"] = ""
+		mountData["error"] = ""
 
 		w.WriteHeader(status)
 		if status > 299 {
@@ -218,20 +224,22 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 			parseTemplates()
 		}
 
+		pageTemplate.Option("missingkey=error")
 		err = pageTemplate.ExecuteTemplate(w, filepath.Base(o.layout), mountData)
 		if err != nil {
 			if errorTemplate != nil {
 				err = errorTemplate.ExecuteTemplate(w, filepath.Base(o.layout), nil)
 				if err != nil {
+					log.Printf("err rendering error template: %v\n", err)
 					w.Write([]byte("something went wrong"))
 				}
 			} else {
+				log.Printf("onMount err: %v\n, with data => \n %+v\n", err, getJSON(mountData))
 				w.Write([]byte("something went wrong"))
 			}
 		}
 		if wc.debugLog {
-			mdata, _ := json.MarshalIndent(mountData, "", " ")
-			log.Printf("rendered page %+v, with data => \n %v\n", page, string(mdata))
+			log.Printf("onMount render page %+v, with data => \n %+v\n", page, getJSON(mountData))
 		}
 	}
 
@@ -295,6 +303,9 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 
 			var eventHandlerErr error
 			if o.viewHandler != nil {
+				if wc.debugLog {
+					log.Printf("[controller] received event %+v \n", sess.event)
+				}
 				eventHandlerErr = o.viewHandler.EventHandler(sess)
 			} else {
 				eventHandler, ok := o.eventHandlers[event.ID]
@@ -306,7 +317,7 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 			}
 
 			if eventHandlerErr != nil {
-				log.Printf("%s: err: %v\n", event.ID, eventHandlerErr)
+				log.Printf("[error] \n event => %+v, \n err: %v\n", event, eventHandlerErr)
 				userMessage := "internal error"
 				if userError := errors.Unwrap(eventHandlerErr); userError != nil {
 					userMessage = userError.Error()
