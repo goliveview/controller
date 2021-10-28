@@ -17,7 +17,7 @@ type M map[string]interface{}
 
 type Event struct {
 	ID       string          `json:"id"`
-	Query    string          `json:"query"`
+	Selector string          `json:"selector"`
 	Template string          `json:"template"`
 	Params   json.RawMessage `json:"params"`
 }
@@ -37,7 +37,7 @@ type SessionStore interface {
 type Session interface {
 	ChangeDataset(target string, data M)
 	ChangeClassList(target string, classList map[string]bool)
-	Morph(query, template string, data M)
+	Morph(selector, template string, data M)
 	Temporary(keys ...string)
 	SessionStore
 }
@@ -192,7 +192,7 @@ func (s session) ChangeClassList(target string, data map[string]bool) {
 	}
 }
 
-func (s session) Morph(query, template string, data M) {
+func (s session) Morph(selector, template string, data M) {
 	var buf bytes.Buffer
 
 	err := s.rootTemplate.ExecuteTemplate(&buf, template, data)
@@ -211,8 +211,8 @@ func (s session) Morph(query, template string, data M) {
 	buf.Reset()
 
 	morphData := map[string]interface{}{
-		"selectQuery": query,
-		"html":        html,
+		"selector": selector,
+		"html":     html,
 	}
 
 	enc := json.NewEncoder(&buf)
