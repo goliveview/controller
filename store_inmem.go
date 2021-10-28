@@ -1,9 +1,13 @@
 package controller
 
-import "sync"
+import (
+	"encoding/json"
+	"fmt"
+	"sync"
+)
 
 type store struct {
-	data M
+	data map[string][]byte
 	sync.RWMutex
 }
 
@@ -11,14 +15,25 @@ func (s store) Set(m M) error {
 	s.Lock()
 	defer s.Unlock()
 	for k, v := range m {
-		s.data[k] = v
+		data, err := json.Marshal(&v)
+		if err != nil {
+			return err
+		}
+		s.data[k] = data
 	}
 	return nil
 }
 
-func (s store) Get(key string) (interface{}, bool) {
+func (s store) Decode(key string, v interface{}) error {
 	s.RLock()
 	defer s.RUnlock()
-	v, ok := s.data[key]
-	return v, ok
+	data, ok := s.data[key]
+	if !ok {
+		return fmt.Errorf("key not found")
+	}
+	err := json.Unmarshal(data, v)
+	if err != nil {
+		return err
+	}
+	return nil
 }

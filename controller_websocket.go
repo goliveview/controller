@@ -127,7 +127,7 @@ func (u *userSessions) GetOrCreate(key int) SessionStore {
 		return s
 	}
 	s = &store{
-		data: make(M),
+		data: make(map[string][]byte),
 	}
 	u.stores[key] = s
 	return s

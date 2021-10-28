@@ -63,7 +63,7 @@ type EventHandler func(ctx Context) error
 
 type SessionStore interface {
 	Set(m M) error
-	Get(key string) (interface{}, bool)
+	Decode(key string, data interface{}) error
 }
 
 type Session interface {
@@ -376,8 +376,8 @@ func (s session) Set(m M) error {
 	return s.store.Set(m)
 }
 
-func (s session) Get(key string) (interface{}, bool) {
-	return s.store.Get(key)
+func (s session) Decode(key string, data interface{}) error {
+	return s.store.Decode(key, data)
 }
 
 var turboTargetWrapper = `{
