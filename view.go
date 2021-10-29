@@ -286,15 +286,17 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 			}
 
 			sess := session{
-				messageType:          mt,
-				conns:                wc.getTopicConnections(*topic),
-				store:                store,
-				rootTemplate:         pageTemplate,
-				event:                *event,
-				temporaryKeys:        []string{"action", "target", "targets", "template"},
-				enableHTMLFormatting: wc.enableHTMLFormatting,
-				requestContext:       ctx,
-				debugLog:             wc.debugLog,
+				dom: &dom{
+					messageType:          mt,
+					conns:                wc.getTopicConnections(*topic),
+					store:                store,
+					rootTemplate:         pageTemplate,
+					temporaryKeys:        []string{"selector", "template"},
+					enableHTMLFormatting: wc.enableHTMLFormatting,
+					debugLog:             wc.debugLog,
+				},
+				event:          *event,
+				requestContext: ctx,
 			}
 			if wc.disableTemplateCache {
 				parseTemplates()
