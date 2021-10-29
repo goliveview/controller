@@ -83,7 +83,7 @@ func (d *dom) ToggleClassList(selector string, boolData map[string]bool) {
 	}
 	d.writePreparedMessage(m.Bytes())
 
-	// update store
+	// update inmemStore
 	data := make(map[string]interface{})
 	for k, v := range boolData {
 		data[k] = v
@@ -138,10 +138,10 @@ func (d *dom) setStore(data M) {
 	for _, t := range d.temporaryKeys {
 		delete(data, t)
 	}
-	// update store
+	// update inmemStore
 	err := d.store.Set(data)
 	if err != nil {
-		log.Printf("error store.set %v\n", err)
+		log.Printf("error inmemStore.set %v\n", err)
 	}
 }
 

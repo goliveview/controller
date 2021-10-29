@@ -24,15 +24,10 @@ func (e Event) String() string {
 
 type EventHandler func(ctx Context) error
 
-type SessionStore interface {
-	Set(m M) error
-	Decode(key string, data interface{}) error
-}
-
 type Session interface {
 	DOM() DOM
+	Store() SessionStore
 	Temporary(keys ...string)
-	SessionStore
 }
 
 type Context interface {
@@ -88,10 +83,6 @@ func (s session) Temporary(keys ...string) {
 	s.dom.temporaryKeys = append(s.dom.temporaryKeys, keys...)
 }
 
-func (s session) Set(m M) error {
-	return s.dom.store.Set(m)
-}
-
-func (s session) Decode(key string, data interface{}) error {
-	return s.dom.store.Decode(key, data)
+func (s session) Store() SessionStore {
+	return s.dom.store
 }

@@ -126,7 +126,7 @@ func (u *userSessions) GetOrCreate(key int) SessionStore {
 		log.Println("existing user ", key)
 		return s
 	}
-	s = &store{
+	s = &inmemStore{
 		data: make(map[string][]byte),
 	}
 	u.stores[key] = s

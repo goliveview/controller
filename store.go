@@ -6,12 +6,17 @@ import (
 	"sync"
 )
 
-type store struct {
+type SessionStore interface {
+	Set(m M) error
+	Decode(key string, data interface{}) error
+}
+
+type inmemStore struct {
 	data map[string][]byte
 	sync.RWMutex
 }
 
-func (s store) Set(m M) error {
+func (s inmemStore) Set(m M) error {
 	s.Lock()
 	defer s.Unlock()
 	for k, v := range m {
@@ -24,7 +29,7 @@ func (s store) Set(m M) error {
 	return nil
 }
 
-func (s store) Decode(key string, v interface{}) error {
+func (s inmemStore) Decode(key string, v interface{}) error {
 	s.RLock()
 	defer s.RUnlock()
 	data, ok := s.data[key]
