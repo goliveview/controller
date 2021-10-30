@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"log"
 	"path/filepath"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -16,7 +17,6 @@ func watchTemplates(wc *websocketController) {
 		log.Fatal(err)
 	}
 	defer watcher.Close()
-
 	done := make(chan bool)
 	go func() {
 		for {
@@ -30,6 +30,7 @@ func watchTemplates(wc *websocketController) {
 					event.Op&fsnotify.Create == fsnotify.Create {
 					m := &Operation{Op: Reload}
 					writePreparedMessage(m.Bytes(), wc.getAllConnections(), websocket.TextMessage)
+					time.Sleep(1000 * time.Millisecond)
 				}
 			case err, ok := <-watcher.Errors:
 				if !ok {
