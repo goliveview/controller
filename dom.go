@@ -18,6 +18,7 @@ const (
 	ClassList Op = "classlist"
 	Dataset   Op = "dataset"
 	Morph     Op = "morph"
+	Reload    Op = "reload"
 )
 
 type Operation struct {
@@ -65,7 +66,7 @@ func (d *dom) SetDataset(selector string, data M) {
 		Selector: selector,
 		Value:    dataset,
 	}
-	d.writePreparedMessage(m.Bytes())
+	writePreparedMessage(m.Bytes(), d.conns, d.messageType)
 	d.setStore(data)
 }
 
@@ -81,7 +82,7 @@ func (d *dom) ToggleClassList(selector string, boolData map[string]bool) {
 		Selector: selector,
 		Value:    classList,
 	}
-	d.writePreparedMessage(m.Bytes())
+	writePreparedMessage(m.Bytes(), d.conns, d.messageType)
 
 	// update inmemStore
 	data := make(map[string]interface{})
@@ -112,25 +113,15 @@ func (d *dom) Morph(selector, template string, data M) {
 		Selector: selector,
 		Value:    html,
 	}
-	d.writePreparedMessage(m.Bytes())
+	writePreparedMessage(m.Bytes(), d.conns, d.messageType)
 	d.setStore(data)
 }
 
-func (d *dom) writePreparedMessage(message []byte) {
-	preparedMessage, err := websocket.NewPreparedMessage(d.messageType, message)
-	if err != nil {
-		log.Printf("err preparing message %v\n", err)
-		return
+func (d *dom) Reload() {
+	m := &Operation{
+		Op: Reload,
 	}
-
-	for topic, conn := range d.conns {
-		err := conn.WritePreparedMessage(preparedMessage)
-		if err != nil {
-			log.Printf("err writing message for topic:%v, %v, closing conn", topic, err)
-			conn.Close()
-			return
-		}
-	}
+	writePreparedMessage(m.Bytes(), d.conns, d.messageType)
 }
 
 func (d *dom) setStore(data M) {
@@ -169,4 +160,21 @@ func getJSON(data M) string {
 		return err.Error()
 	}
 	return string(b)
+}
+
+func writePreparedMessage(message []byte, conns map[string]*websocket.Conn, messageType int) {
+	preparedMessage, err := websocket.NewPreparedMessage(messageType, message)
+	if err != nil {
+		log.Printf("err preparing message %v\n", err)
+		return
+	}
+
+	for topic, conn := range conns {
+		err := conn.WritePreparedMessage(preparedMessage)
+		if err != nil {
+			log.Printf("err writing message for topic:%v, %v, closing conn", topic, err)
+			conn.Close()
+			return
+		}
+	}
 }

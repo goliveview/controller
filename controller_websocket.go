@@ -20,12 +20,15 @@ type Controller interface {
 }
 
 type controlOpt struct {
-	requestContextFunc   func(r *http.Request) context.Context
-	subscribeTopicFunc   func(r *http.Request) *string
-	upgrader             websocket.Upgrader
+	requestContextFunc func(r *http.Request) context.Context
+	subscribeTopicFunc func(r *http.Request) *string
+	upgrader           websocket.Upgrader
+
 	enableHTMLFormatting bool
 	disableTemplateCache bool
 	debugLog             bool
+	enableWatch          bool
+	watchPaths           []string
 }
 
 type Option func(*controlOpt)
@@ -66,6 +69,15 @@ func EnableDebugLog() Option {
 	}
 }
 
+func EnableWatch(paths ...string) Option {
+	return func(o *controlOpt) {
+		o.enableWatch = true
+		if len(paths) > 0 {
+			o.watchPaths = paths
+		}
+	}
+}
+
 func Websocket(name *string, options ...Option) Controller {
 	if name == nil {
 		panic("controller name is required")
@@ -84,13 +96,15 @@ func Websocket(name *string, options ...Option) Controller {
 			log.Println("client subscribed to topic", topic)
 			return &topic
 		},
-		upgrader: websocket.Upgrader{},
+		upgrader:   websocket.Upgrader{EnableCompression: true},
+		watchPaths: []string{"./templates"},
 	}
 
 	for _, option := range options {
 		option(o)
 	}
-	return &websocketController{
+
+	wc := &websocketController{
 		cookieStore:      sessions.NewCookieStore([]byte(securecookie.GenerateRandomKey(32))),
 		topicConnections: make(map[string]map[string]*websocket.Conn),
 		controlOpt:       *o,
@@ -99,6 +113,10 @@ func Websocket(name *string, options ...Option) Controller {
 			stores: make(map[int]SessionStore),
 		},
 	}
+	if wc.enableWatch {
+		go watchTemplates(wc)
+	}
+	return wc
 }
 
 type userCount struct {
@@ -118,7 +136,7 @@ type userSessions struct {
 	sync.RWMutex
 }
 
-func (u *userSessions) GetOrCreate(key int) SessionStore {
+func (u *userSessions) getOrCreate(key int) SessionStore {
 	u.Lock()
 	defer u.Unlock()
 	s, ok := u.stores[key]
@@ -185,4 +203,17 @@ func (wc *websocketController) getTopicConnections(topic string) map[string]*web
 		return map[string]*websocket.Conn{}
 	}
 	return connMap
+}
+
+func (wc *websocketController) getAllConnections() map[string]*websocket.Conn {
+	wc.Lock()
+	defer wc.Unlock()
+	conns := make(map[string]*websocket.Conn)
+	for _, cm := range wc.topicConnections {
+		for k, m := range cm {
+			conns[k] = m
+		}
+	}
+
+	return conns
 }

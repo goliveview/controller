@@ -260,7 +260,7 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 		defer c.Close()
 
 		connID := shortuuid.New()
-		store := wc.userSessions.GetOrCreate(user)
+		store := wc.userSessions.getOrCreate(user)
 		store.Set(mountData)
 		if topic != nil {
 			wc.addConnection(*topic, connID, c)
