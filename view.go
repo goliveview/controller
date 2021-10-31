@@ -216,7 +216,8 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 			// TODO: custom error page
 			w.Write([]byte(fmt.Sprintf(
 				`<div style="text-align:center"><h1>%d</h1></div>
-<div style="text-align:center"><a href="javascript:history.back()">back</a></div>`, status)))
+<div style="text-align:center"><a href="javascript:history.back()">back</a></div>
+<div style="text-align:center"><a href="/">home</a></div>`, status)))
 			return
 		}
 

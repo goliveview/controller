@@ -1,9 +1,19 @@
 package controller
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
+
+	"github.com/alecthomas/chroma/formatters/html"
+
+	"github.com/alecthomas/chroma"
+	"github.com/alecthomas/chroma/lexers"
+	"github.com/alecthomas/chroma/styles"
+
+	"github.com/davecgh/go-spew/spew"
 
 	"github.com/Masterminds/sprig"
 )
@@ -15,7 +25,7 @@ func DefaultFuncMap() template.FuncMap {
 	}
 	allFuncs["bytesToMap"] = bytesToMap
 	allFuncs["bytesToString"] = bytesToString
-	allFuncs["stdout"] = stdout
+	allFuncs["dump"] = dump
 	return allFuncs
 }
 
@@ -32,7 +42,33 @@ func bytesToString(data []byte) string {
 	return string(data)
 }
 
-func stdout(key string, val interface{}) interface{} {
-	fmt.Printf("%v: %v", key, val)
-	return val
+func dump(val interface{}) (template.HTML, error) {
+	var buf bytes.Buffer
+	defer buf.Reset()
+	err := highlight(&buf, spew.Sdump(val), "dracula")
+	if err != nil {
+		return "", err
+	}
+	return template.HTML(fmt.Sprintf("<code>%v</code>", buf.String())), nil
+}
+
+func highlight(w io.Writer, source, style string) error {
+	// Determine lexer.
+	l := lexers.Get("go")
+	l = chroma.Coalesce(l)
+
+	// Determine formatter.
+	f := html.New(html.WithClasses(false))
+
+	// Determine style.
+	s := styles.Get(style)
+	if s == nil {
+		s = styles.Fallback
+	}
+
+	it, err := l.Tokenise(nil, source)
+	if err != nil {
+		return err
+	}
+	return f.Format(w, s, it)
 }
