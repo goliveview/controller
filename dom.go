@@ -15,10 +15,12 @@ import (
 type Op string
 
 const (
-	ClassList Op = "classlist"
-	Dataset   Op = "dataset"
-	Morph     Op = "morph"
-	Reload    Op = "reload"
+	ClassList   Op = "classlist"
+	Dataset     Op = "dataset"
+	Morph       Op = "morph"
+	Reload      Op = "reload"
+	AddClass    Op = "addClass"
+	RemoveClass Op = "removeClass"
 )
 
 type Operation struct {
@@ -39,6 +41,8 @@ func (m *Operation) Bytes() []byte {
 type DOM interface {
 	SetDataset(selector string, data M)
 	ToggleClassList(selector string, classList map[string]bool)
+	AddClass(selector, class string)
+	RemoveClass(selector, class string)
 	Morph(selector, template string, data M)
 }
 
@@ -89,6 +93,36 @@ func (d *dom) ToggleClassList(selector string, boolData map[string]bool) {
 	for k, v := range boolData {
 		data[k] = v
 	}
+	d.setStore(data)
+}
+
+func (d *dom) AddClass(selector, class string) {
+
+	m := &Operation{
+		Op:       AddClass,
+		Selector: selector,
+		Value:    class,
+	}
+	writePreparedMessage(m.Bytes(), d.conns, d.messageType)
+
+	// update store
+	data := make(map[string]interface{})
+	data[class] = true
+	d.setStore(data)
+}
+
+func (d *dom) RemoveClass(selector, class string) {
+
+	m := &Operation{
+		Op:       RemoveClass,
+		Selector: selector,
+		Value:    class,
+	}
+	writePreparedMessage(m.Bytes(), d.conns, d.messageType)
+
+	// update store
+	data := make(map[string]interface{})
+	data[class] = false
 	d.setStore(data)
 }
 
