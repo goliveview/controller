@@ -26,6 +26,7 @@ func contains(arr []string, s string) bool {
 }
 
 type OnMount func(r *http.Request) (int, M)
+type OnPost func(w http.ResponseWriter, r *http.Request) (int, M)
 type ViewOption func(opt *viewOpt)
 type ViewHandler interface {
 	OnMount(r *http.Request) (int, M)
@@ -40,6 +41,7 @@ type viewOpt struct {
 	extensions        []string
 	funcMap           template.FuncMap
 	onMountFunc       OnMount
+	onPostFunc        OnPost
 	eventHandlers     map[string]EventHandler
 	viewHandler       ViewHandler
 }
@@ -77,6 +79,12 @@ func WithFuncMap(funcMap template.FuncMap) ViewOption {
 func WithOnMount(onMountFunc OnMount) ViewOption {
 	return func(o *viewOpt) {
 		o.onMountFunc = onMountFunc
+	}
+}
+
+func WithOnPost(onPostFunc OnPost) ViewOption {
+	return func(o *viewOpt) {
+		o.onPostFunc = onPostFunc
 	}
 }
 
@@ -196,20 +204,30 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 	parseTemplates()
 
 	mountData := make(M)
+	mountData["app_name"] = wc.name
+	mountData["errors"] = ""
+	mountData["error"] = ""
 	status := 200
 	renderPage := func(w http.ResponseWriter, r *http.Request) {
-		if o.viewHandler != nil {
-			status, mountData = o.viewHandler.OnMount(r)
-		} else if o.onMountFunc != nil {
-			status, mountData = o.onMountFunc(r)
-		}
-		if mountData == nil {
-			mountData = make(M)
+		if r.Method == "GET" {
+			if o.viewHandler != nil {
+				status, mountData = o.viewHandler.OnMount(r)
+			} else if o.onMountFunc != nil {
+				status, mountData = o.onMountFunc(r)
+			}
+		} else if r.Method == "POST" {
+			if o.onPostFunc != nil {
+				status, mountData = o.onPostFunc(w, r)
+				log.Println(status, mountData)
+			}
 		}
 
-		mountData["app_name"] = wc.name
-		mountData["errors"] = ""
-		mountData["error"] = ""
+		if mountData == nil {
+			mountData = make(M)
+			mountData["app_name"] = wc.name
+			mountData["errors"] = ""
+			mountData["error"] = ""
+		}
 
 		w.WriteHeader(status)
 		if status > 299 {
@@ -235,7 +253,12 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 					w.Write([]byte("something went wrong"))
 				}
 			} else {
-				log.Printf("onMount err: %v\n, with data => \n %+v\n", err, getJSON(mountData))
+				if r.Method == "POST" {
+					log.Printf("onPost err: %v\n, with data => \n %+v\n", err, getJSON(mountData))
+				} else {
+					log.Printf("onMount err: %v\n, with data => \n %+v\n", err, getJSON(mountData))
+				}
+
 				w.Write([]byte("something went wrong"))
 			}
 		}

@@ -18,3 +18,4 @@
 [] broadcast to clients over pubsusb.
 [] Support template.ParseFS
 [] morphdom diffing support
+[] csrf token https://coletiv.com/blog/using-websockets-with-cookie-based-authentication/
