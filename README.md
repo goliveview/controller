@@ -3,7 +3,7 @@
 ## Todos
 
 [] Use layout and partials at controller level
-[] Refresh browser when templates are modified
+[x] Refresh browser when templates are modified
 [] go stats
 [] SessionStore implementation using badger
 [] LiveList: sorting, pagination, patching
@@ -15,3 +15,6 @@
 [] Compile time validation of data attributes: if target == dataset
 [] Describe dataset as json files in template/partials/target.dataset
 [] (stimulus)Handle 4XX, 5XX types error to go to a /4xx,5xx page.
+[] broadcast to clients over pubsusb.
+[] Support template.ParseFS
+[] morphdom diffing support

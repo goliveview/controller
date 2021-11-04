@@ -37,8 +37,8 @@ func (m *Operation) Bytes() []byte {
 }
 
 type DOM interface {
-	SetDataset(target string, data M)
-	ToggleClassList(target string, classList map[string]bool)
+	SetDataset(selector string, data M)
+	ToggleClassList(selector string, classList map[string]bool)
 	Morph(selector, template string, data M)
 }
 

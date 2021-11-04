@@ -225,7 +225,7 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 			parseTemplates()
 		}
 
-		pageTemplate.Option("missingkey=error")
+		pageTemplate.Option("missingkey=zero")
 		err = pageTemplate.ExecuteTemplate(w, filepath.Base(o.layout), mountData)
 		if err != nil {
 			if errorTemplate != nil {
