@@ -25,11 +25,10 @@ func contains(arr []string, s string) bool {
 	return false
 }
 
-type OnMount func(r *http.Request) (int, M)
-type OnPost func(w http.ResponseWriter, r *http.Request) (int, M)
+type OnMount func(w http.ResponseWriter, r *http.Request) (int, M)
 type ViewOption func(opt *viewOpt)
 type ViewHandler interface {
-	OnMount(r *http.Request) (int, M)
+	OnMount(w http.ResponseWriter, r *http.Request) (int, M)
 	EventHandler(ctx Context) error
 }
 
@@ -41,7 +40,6 @@ type viewOpt struct {
 	extensions        []string
 	funcMap           template.FuncMap
 	onMountFunc       OnMount
-	onPostFunc        OnPost
 	eventHandlers     map[string]EventHandler
 	viewHandler       ViewHandler
 }
@@ -79,12 +77,6 @@ func WithFuncMap(funcMap template.FuncMap) ViewOption {
 func WithOnMount(onMountFunc OnMount) ViewOption {
 	return func(o *viewOpt) {
 		o.onMountFunc = onMountFunc
-	}
-}
-
-func WithOnPost(onPostFunc OnPost) ViewOption {
-	return func(o *viewOpt) {
-		o.onPostFunc = onPostFunc
 	}
 }
 
@@ -209,17 +201,11 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 	mountData["error"] = ""
 	status := 200
 	renderPage := func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "GET" {
-			if o.viewHandler != nil {
-				status, mountData = o.viewHandler.OnMount(r)
-			} else if o.onMountFunc != nil {
-				status, mountData = o.onMountFunc(r)
-			}
-		} else if r.Method == "POST" {
-			if o.onPostFunc != nil {
-				status, mountData = o.onPostFunc(w, r)
-				log.Println(status, mountData)
-			}
+
+		if o.viewHandler != nil {
+			status, mountData = o.viewHandler.OnMount(w, r)
+		} else if o.onMountFunc != nil {
+			status, mountData = o.onMountFunc(w, r)
 		}
 
 		if mountData == nil {
