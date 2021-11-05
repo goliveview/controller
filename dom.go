@@ -44,6 +44,7 @@ type DOM interface {
 	AddClass(selector, class string)
 	RemoveClass(selector, class string)
 	Morph(selector, template string, data M)
+	Reload()
 }
 
 type dom struct {

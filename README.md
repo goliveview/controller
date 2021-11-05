@@ -19,3 +19,4 @@
 [] Support template.ParseFS
 [] morphdom diffing support
 [] csrf token https://coletiv.com/blog/using-websockets-with-cookie-based-authentication/
+[] set/unset session id on controller level. session id is available to all pages.
