@@ -16,7 +16,7 @@ import (
 )
 
 type Controller interface {
-	View(page string, options ...ViewOption) http.HandlerFunc
+	Handle(view View) http.HandlerFunc
 }
 
 type controlOpt struct {

@@ -16,179 +16,108 @@ import (
 	"github.com/lithammer/shortuuid/v3"
 )
 
-func contains(arr []string, s string) bool {
-	for _, a := range arr {
-		if a == s {
-			return true
-		}
-	}
-	return false
-}
-
-type OnMount func(w http.ResponseWriter, r *http.Request) (int, M)
-type ViewOption func(opt *viewOpt)
-type ViewHandler interface {
+type View interface {
+	Content() string
 	OnMount(w http.ResponseWriter, r *http.Request) (int, M)
-	EventHandler(ctx Context) error
+	OnEvent(ctx Context) error
+	Layout() string
+	LayoutContentName() string
+	Partials() []string
+	Extensions() []string
+	FuncMap() template.FuncMap
+	ErrorPage() string
 }
 
-type viewOpt struct {
-	errorPage         string
-	layout            string
-	layoutContentName string
-	partials          []string
-	extensions        []string
-	funcMap           template.FuncMap
-	onMountFunc       OnMount
-	eventHandlers     map[string]EventHandler
-	viewHandler       ViewHandler
+type DefaultView struct{}
+
+func (d DefaultView) OnMount(w http.ResponseWriter, r *http.Request) (int, M) {
+	return 200, M{}
 }
 
-func WithLayout(layout string) ViewOption {
-	return func(o *viewOpt) {
-		o.layout = layout
+func (d DefaultView) OnEvent(ctx Context) error {
+	switch ctx.Event().ID {
+	default:
+		log.Printf("[defaultView] warning:handler not found for event => \n %+v\n", ctx.Event())
 	}
+	return nil
 }
 
-func WithLayoutContentName(layoutContentName string) ViewOption {
-	return func(o *viewOpt) {
-		o.layoutContentName = layoutContentName
-	}
+func (d DefaultView) Content() string {
+	return "./templates/index.html"
 }
 
-func WithPartials(partials ...string) ViewOption {
-	return func(o *viewOpt) {
-		o.partials = partials
-	}
+func (d DefaultView) Layout() string {
+	return "./templates/layouts/index.html"
 }
 
-func WithExtensions(extensions ...string) ViewOption {
-	return func(o *viewOpt) {
-		o.extensions = extensions
-	}
+func (d DefaultView) LayoutContentName() string {
+	return "content"
 }
 
-func WithFuncMap(funcMap template.FuncMap) ViewOption {
-	return func(o *viewOpt) {
-		o.funcMap = funcMap
-	}
+func (d DefaultView) Partials() []string {
+	return []string{"./templates/partials"}
 }
 
-func WithOnMount(onMountFunc OnMount) ViewOption {
-	return func(o *viewOpt) {
-		o.onMountFunc = onMountFunc
-	}
+func (d DefaultView) Extensions() []string {
+	return []string{".html", ".tmpl"}
 }
 
-func WithErrorPage(errorPage string) ViewOption {
-	return func(o *viewOpt) {
-		o.errorPage = errorPage
-	}
+func (d DefaultView) FuncMap() template.FuncMap {
+	return DefaultFuncMap()
 }
 
-func WithEventHandlers(eventHandlers map[string]EventHandler) ViewOption {
-	return func(o *viewOpt) {
-		o.eventHandlers = eventHandlers
-	}
+func (d DefaultView) ErrorPage() string {
+	return "./templates/error.html"
 }
 
-func WithHandler(viewHandler ViewHandler) ViewOption {
-	return func(o *viewOpt) {
-		o.viewHandler = viewHandler
-	}
-}
-
-func find(p string, extensions []string) []string {
-	var files []string
-
-	fi, err := os.Stat(p)
-	if os.IsNotExist(err) {
-		return files
-	}
-	if !fi.IsDir() {
-		if !contains(extensions, filepath.Ext(p)) {
-			return files
-		}
-		files = append(files, p)
-		return files
-	}
-	err = filepath.WalkDir(p, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if contains(extensions, filepath.Ext(d.Name())) {
-			files = append(files, path)
-		}
-		return nil
-	})
-
-	if err != nil {
-		panic(err)
-	}
-
-	return files
-}
-
-func (wc *websocketController) View(page string, options ...ViewOption) http.HandlerFunc {
-	o := &viewOpt{
-		layout:            "./templates/layouts/index.html",
-		layoutContentName: "content",
-		partials:          []string{"./templates/partials"},
-		extensions:        []string{".html", ".tmpl"},
-		funcMap:           DefaultFuncMap(),
-	}
-	for _, option := range options {
-		option(o)
-	}
-
+func (wc *websocketController) Handle(view View) http.HandlerFunc {
 	var pageTemplate *template.Template
 	var errorTemplate *template.Template
 	var err error
 
 	parseTemplates := func() {
 		// layout
-		commonFiles := []string{o.layout}
+		commonFiles := []string{view.Layout()}
 		// global partials
-		for _, p := range o.partials {
-			commonFiles = append(commonFiles, find(p, o.extensions)...)
+		for _, p := range view.Partials() {
+			commonFiles = append(commonFiles, find(p, view.Extensions())...)
 		}
-		layoutTemplate := template.Must(template.New("").Funcs(o.funcMap).ParseFiles(commonFiles...))
+		layoutTemplate := template.Must(template.New("").Funcs(view.FuncMap()).ParseFiles(commonFiles...))
 
 		pageTemplateCone := template.Must(layoutTemplate.Clone())
 		var pageFiles []string
 		// page and its partials
-		pageFiles = append(pageFiles, find(page, o.extensions)...)
+		pageFiles = append(pageFiles, find(view.Content(), view.Extensions())...)
 		// contains: 1. layout 2. page  3. partials
 		pageTemplate, err = pageTemplateCone.ParseFiles(pageFiles...)
 		if err != nil {
 			panic(fmt.Errorf("error parsing files err %v", err))
 		}
 
-		if ct := pageTemplate.Lookup(o.layoutContentName); ct == nil {
+		if ct := pageTemplate.Lookup(view.LayoutContentName()); ct == nil {
 			panic(fmt.Errorf("err looking up layoutContent: the layout %s expects a template named %s",
-				o.layout, o.layoutContentName))
+				view.Layout(), view.LayoutContentName()))
 		}
 
 		if err != nil {
 			panic(err)
 		}
 
-		if o.errorPage != "" {
+		if view.ErrorPage() != "" {
 			// layout
 			var errorFiles []string
 			errorTemplateCone := template.Must(layoutTemplate.Clone())
 			// error page and its partials
-			errorFiles = append(errorFiles, find(page, o.extensions)...)
+			errorFiles = append(errorFiles, find(view.Content(), view.Extensions())...)
 			// contains: 1. layout 2. page  3. partials
 			errorTemplate, err = errorTemplateCone.ParseFiles(errorFiles...)
 			if err != nil {
-				panic(fmt.Errorf("error parsing error page template err %v", err))
+				panic(fmt.Errorf("error parsing error view template err %v", err))
 			}
 
-			if ct := errorTemplate.Lookup(o.layoutContentName); ct == nil {
+			if ct := errorTemplate.Lookup(view.LayoutContentName()); ct == nil {
 				panic(fmt.Errorf("err looking up layoutContent: the layout %s expects a template named %s",
-					o.layout, o.layoutContentName))
+					view.Layout(), view.LayoutContentName()))
 			}
 		}
 	}
@@ -197,14 +126,8 @@ func (wc *websocketController) View(page string, options ...ViewOption) http.Han
 
 	mountData := make(M)
 	status := 200
-	renderPage := func(w http.ResponseWriter, r *http.Request) {
-
-		if o.viewHandler != nil {
-			status, mountData = o.viewHandler.OnMount(w, r)
-		} else if o.onMountFunc != nil {
-			status, mountData = o.onMountFunc(w, r)
-		}
-
+	renderView := func(w http.ResponseWriter, r *http.Request) {
+		status, mountData = view.OnMount(w, r)
 		if mountData == nil {
 			mountData = make(M)
 		}
@@ -226,10 +149,10 @@ func (wc *websocketController) View(page string, options ...ViewOption) http.Han
 		}
 
 		pageTemplate.Option("missingkey=zero")
-		err = pageTemplate.ExecuteTemplate(w, filepath.Base(o.layout), mountData)
+		err = pageTemplate.ExecuteTemplate(w, filepath.Base(view.Layout()), mountData)
 		if err != nil {
 			if errorTemplate != nil {
-				err = errorTemplate.ExecuteTemplate(w, filepath.Base(o.layout), nil)
+				err = errorTemplate.ExecuteTemplate(w, filepath.Base(view.Layout()), nil)
 				if err != nil {
 					log.Printf("err rendering error template: %v\n", err)
 					w.Write([]byte("something went wrong"))
@@ -245,7 +168,7 @@ func (wc *websocketController) View(page string, options ...ViewOption) http.Han
 			}
 		}
 		if wc.debugLog {
-			log.Printf("onMount render page %+v, with data => \n %+v\n", page, getJSON(mountData))
+			log.Printf("onMount render view %+v, with data => \n %+v\n", view.Content(), getJSON(mountData))
 		}
 	}
 
@@ -310,19 +233,11 @@ func (wc *websocketController) View(page string, options ...ViewOption) http.Han
 			sess.unsetError()
 
 			var eventHandlerErr error
-			if o.viewHandler != nil {
-				if wc.debugLog {
-					log.Printf("[controller] received event %+v \n", sess.event)
-				}
-				eventHandlerErr = o.viewHandler.EventHandler(sess)
-			} else {
-				eventHandler, ok := o.eventHandlers[event.ID]
-				if !ok {
-					log.Printf("err: no handler found for event %s\n", event.ID)
-					continue
-				}
-				eventHandlerErr = eventHandler(sess)
+
+			if wc.debugLog {
+				log.Printf("[controller] received event %+v \n", sess.event)
 			}
+			eventHandlerErr = view.OnEvent(sess)
 
 			if eventHandlerErr != nil {
 				log.Printf("[error] \n event => %+v, \n err: %v\n", event, eventHandlerErr)
@@ -354,7 +269,7 @@ func (wc *websocketController) View(page string, options ...ViewOption) http.Han
 		if r.Header.Get("Connection") == "Upgrade" && r.Header.Get("Upgrade") == "websocket" {
 			handleSocket(w, r, user.(int))
 		} else {
-			renderPage(w, r)
+			renderView(w, r)
 		}
 	}
 }
@@ -367,4 +282,45 @@ func UserError(err error) string {
 		userMessage = userError.Error()
 	}
 	return userMessage
+}
+
+func find(p string, extensions []string) []string {
+	var files []string
+
+	fi, err := os.Stat(p)
+	if os.IsNotExist(err) {
+		return files
+	}
+	if !fi.IsDir() {
+		if !contains(extensions, filepath.Ext(p)) {
+			return files
+		}
+		files = append(files, p)
+		return files
+	}
+	err = filepath.WalkDir(p, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if contains(extensions, filepath.Ext(d.Name())) {
+			files = append(files, path)
+		}
+		return nil
+	})
+
+	if err != nil {
+		panic(err)
+	}
+
+	return files
+}
+
+func contains(arr []string, s string) bool {
+	for _, a := range arr {
+		if a == s {
+			return true
+		}
+	}
+	return false
 }
