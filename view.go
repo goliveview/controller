@@ -196,9 +196,6 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 	parseTemplates()
 
 	mountData := make(M)
-	mountData["app_name"] = wc.name
-	mountData["errors"] = ""
-	mountData["error"] = ""
 	status := 200
 	renderPage := func(w http.ResponseWriter, r *http.Request) {
 
@@ -210,10 +207,9 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 
 		if mountData == nil {
 			mountData = make(M)
-			mountData["app_name"] = wc.name
-			mountData["errors"] = ""
-			mountData["error"] = ""
 		}
+
+		mountData["app_name"] = wc.name
 
 		w.WriteHeader(status)
 		if status > 299 {
