@@ -92,7 +92,7 @@ func WithEventHandlers(eventHandlers map[string]EventHandler) ViewOption {
 	}
 }
 
-func WithViewHandler(viewHandler ViewHandler) ViewOption {
+func WithHandler(viewHandler ViewHandler) ViewOption {
 	return func(o *viewOpt) {
 		o.viewHandler = viewHandler
 	}
@@ -130,7 +130,7 @@ func find(p string, extensions []string) []string {
 	return files
 }
 
-func (wc *websocketController) NewView(page string, options ...ViewOption) http.HandlerFunc {
+func (wc *websocketController) View(page string, options ...ViewOption) http.HandlerFunc {
 	o := &viewOpt{
 		layout:            "./templates/layouts/index.html",
 		layoutContentName: "content",
