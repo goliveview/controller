@@ -330,11 +330,7 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 
 			if eventHandlerErr != nil {
 				log.Printf("[error] \n event => %+v, \n err: %v\n", event, eventHandlerErr)
-				userMessage := "internal error"
-				if userError := errors.Unwrap(eventHandlerErr); userError != nil {
-					userMessage = userError.Error()
-				}
-				sess.setError(userMessage, eventHandlerErr)
+				sess.setError(UserError(eventHandlerErr), eventHandlerErr)
 			}
 		}
 
@@ -365,4 +361,14 @@ func (wc *websocketController) NewView(page string, options ...ViewOption) http.
 			renderPage(w, r)
 		}
 	}
+}
+
+var DefaultUserErrorMessage = "internal error"
+
+func UserError(err error) string {
+	userMessage := DefaultUserErrorMessage
+	if userError := errors.Unwrap(err); userError != nil {
+		userMessage = userError.Error()
+	}
+	return userMessage
 }
