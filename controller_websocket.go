@@ -16,7 +16,7 @@ import (
 )
 
 type Controller interface {
-	Handle(view View) http.HandlerFunc
+	Handler(view View) http.HandlerFunc
 }
 
 type controlOpt struct {
@@ -29,6 +29,8 @@ type controlOpt struct {
 	debugLog             bool
 	enableWatch          bool
 	watchPaths           []string
+	developmentMode      bool
+	errorView            View
 }
 
 type Option func(*controlOpt)
@@ -48,6 +50,12 @@ func WithSubscribeTopic(f func(r *http.Request) *string) Option {
 func WithUpgrader(upgrader websocket.Upgrader) Option {
 	return func(o *controlOpt) {
 		o.upgrader = upgrader
+	}
+}
+
+func WithErrorView(view View) Option {
+	return func(o *controlOpt) {
+		o.errorView = view
 	}
 }
 
@@ -78,8 +86,14 @@ func EnableWatch(paths ...string) Option {
 	}
 }
 
-func Websocket(name *string, options ...Option) Controller {
-	if name == nil {
+func DevelopmentMode(enable bool) Option {
+	return func(o *controlOpt) {
+		o.developmentMode = enable
+	}
+}
+
+func Websocket(name string, options ...Option) Controller {
+	if name == "" {
 		panic("controller name is required")
 	}
 
@@ -98,6 +112,7 @@ func Websocket(name *string, options ...Option) Controller {
 		},
 		upgrader:   websocket.Upgrader{EnableCompression: true},
 		watchPaths: []string{"./templates"},
+		errorView:  &DefaultErrorView{},
 	}
 
 	for _, option := range options {
@@ -105,14 +120,22 @@ func Websocket(name *string, options ...Option) Controller {
 	}
 
 	wc := &websocketController{
-		cookieStore:      sessions.NewCookieStore([]byte(securecookie.GenerateRandomKey(32))),
+		cookieStore:      sessions.NewCookieStore(securecookie.GenerateRandomKey(32)),
 		topicConnections: make(map[string]map[string]*websocket.Conn),
 		controlOpt:       *o,
-		name:             *name,
+		name:             name,
 		userSessions: userSessions{
 			stores: make(map[int]SessionStore),
 		},
 	}
+	log.Println("controller starting in developer mode ...", wc.developmentMode)
+	if wc.developmentMode {
+		wc.debugLog = true
+		wc.enableWatch = true
+		wc.enableHTMLFormatting = true
+		wc.disableTemplateCache = true
+	}
+
 	if wc.enableWatch {
 		go watchTemplates(wc)
 	}
@@ -216,4 +239,59 @@ func (wc *websocketController) getAllConnections() map[string]*websocket.Conn {
 	}
 
 	return conns
+}
+
+func (wc *websocketController) getUser(w http.ResponseWriter, r *http.Request) (int, error) {
+	name := strings.TrimSpace(wc.name)
+	wc.cookieStore.MaxAge(0)
+	cookieSession, _ := wc.cookieStore.Get(r, fmt.Sprintf("_glv_key_%s", name))
+	user := cookieSession.Values["user"]
+	if user == nil {
+		c := wc.userCount.incr()
+		cookieSession.Values["user"] = c
+		user = c
+	}
+	err := cookieSession.Save(r, w)
+	if err != nil {
+		log.Printf("getUser err %v\n", err)
+		return -1, err
+	}
+
+	return user.(int), nil
+}
+
+func (wc *websocketController) Handler(view View) http.HandlerFunc {
+	viewTemplate, err := parseTemplate(view)
+	if err != nil {
+		panic(err)
+	}
+
+	errorViewTemplate, err := parseTemplate(wc.errorView)
+	if err != nil {
+		panic(err)
+	}
+
+	mountData := make(M)
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, err := wc.getUser(w, r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		v := &viewHandler{
+			view:              view,
+			errorView:         wc.errorView,
+			viewTemplate:      viewTemplate,
+			errorViewTemplate: errorViewTemplate,
+			mountData:         mountData,
+			wc:                wc,
+			user:              user,
+		}
+		if r.Header.Get("Connection") == "Upgrade" &&
+			r.Header.Get("Upgrade") == "websocket" {
+			onEvent(w, r, v)
+		} else {
+			onMount(w, r, v)
+		}
+	}
 }

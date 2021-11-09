@@ -10,7 +10,7 @@ require (
 	github.com/gorilla/securecookie v1.1.1
 	github.com/gorilla/sessions v1.2.1
 	github.com/gorilla/websocket v1.4.2
-	github.com/lithammer/shortuuid/v3 v3.0.7
+	github.com/lithammer/shortuuid v3.0.0+incompatible
 	github.com/yosssi/gohtml v0.0.0-20201013000340-ee4748c638f4
 )
 
