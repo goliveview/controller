@@ -7,8 +7,8 @@ import (
 )
 
 type SessionStore interface {
-	Set(m M) error
-	Decode(key string, data interface{}) error
+	Put(m M) error
+	Get(key string, data interface{}) error
 }
 
 type inmemStore struct {
@@ -16,7 +16,7 @@ type inmemStore struct {
 	sync.RWMutex
 }
 
-func (s inmemStore) Set(m M) error {
+func (s inmemStore) Put(m M) error {
 	s.Lock()
 	defer s.Unlock()
 	for k, v := range m {
@@ -29,7 +29,7 @@ func (s inmemStore) Set(m M) error {
 	return nil
 }
 
-func (s inmemStore) Decode(key string, v interface{}) error {
+func (s inmemStore) Get(key string, v interface{}) error {
 	s.RLock()
 	defer s.RUnlock()
 	data, ok := s.data[key]

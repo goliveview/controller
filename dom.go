@@ -188,7 +188,7 @@ func (d *dom) setStore(data M) {
 		delete(data, t)
 	}
 	// update inmemStore
-	err := d.store.Set(data)
+	err := d.store.Put(data)
 	if err != nil {
 		log.Printf("error inmemStore.set %v\n", err)
 	}
