@@ -21,7 +21,27 @@ type Status struct {
 }
 
 type View interface {
+	// Content represents the path to the html page content
 	Content() string
+	// Layout represents the path to the base layout to be used.
+	/*
+			layout.html e.g.
+			<!DOCTYPE html>
+			<html lang="en">
+			<head>
+				<title>{{.app_name}}</title>
+				{{template "header" .}}
+			</head>
+			<body>
+			{{template "navbar" .}}
+			<div>
+				{{template "content" .}}
+			</div>
+			{{template "footer" .}}
+			</body>
+			</html>
+		 The {{template "content" .}} directive is replaced by the page in the path exposed by `Content`
+	*/
 	Layout() string
 	OnMount(w http.ResponseWriter, r *http.Request) (Status, M)
 	OnEvent(ctx Context) error
@@ -34,11 +54,11 @@ type View interface {
 type DefaultView struct{}
 
 func (d DefaultView) Content() string {
-	return "./templates/index.html"
+	return ""
 }
 
 func (d DefaultView) Layout() string {
-	return "./templates/layouts/index.html"
+	return ""
 }
 
 func (d DefaultView) OnMount(w http.ResponseWriter, r *http.Request) (Status, M) {
@@ -72,11 +92,16 @@ func (d DefaultView) FuncMap() template.FuncMap {
 type DefaultErrorView struct{}
 
 func (d DefaultErrorView) Content() string {
-	return "./templates/error.html"
+	return `{{ define "content"}}
+    <div style="text-align:center"><h1>{{.statusCode}}</h1></div>
+    <div style="text-align:center"><h1>{{.statusMessage}}</h1></div>
+    <div style="text-align:center"><a href="javascript:history.back()">back</a></div>
+    <div style="text-align:center"><a href="/">home</a></div>
+{{ end }}`
 }
 
 func (d DefaultErrorView) Layout() string {
-	return "./templates/layouts/error.html"
+	return ""
 }
 
 func (d DefaultErrorView) OnMount(w http.ResponseWriter, r *http.Request) (Status, M) {
@@ -120,6 +145,7 @@ type viewHandler struct {
 func (v *viewHandler) reloadTemplates() {
 	var err error
 	if v.wc.disableTemplateCache {
+
 		v.viewTemplate, err = parseTemplate(v.view)
 		if err != nil {
 			panic(err)
@@ -134,6 +160,7 @@ func (v *viewHandler) reloadTemplates() {
 
 func onMount(w http.ResponseWriter, r *http.Request, v *viewHandler) {
 	v.reloadTemplates()
+
 	var err error
 	var status Status
 	status, v.mountData = v.view.OnMount(w, r)
@@ -146,10 +173,10 @@ func onMount(w http.ResponseWriter, r *http.Request, v *viewHandler) {
 		onMountError(w, r, v, &status)
 		return
 	}
-
 	v.viewTemplate.Option("missingkey=zero")
-	err = v.viewTemplate.ExecuteTemplate(w, filepath.Base(v.view.Layout()), v.mountData)
+	err = v.viewTemplate.Execute(w, v.mountData)
 	if err != nil {
+		log.Printf("onMount viewTemplate.Execute error:  %v", err)
 		onMountError(w, r, v, nil)
 	}
 	if v.wc.debugLog {
@@ -170,7 +197,7 @@ func onMountError(w http.ResponseWriter, r *http.Request, v *viewHandler, status
 	}
 	v.mountData["statusCode"] = status.Code
 	v.mountData["statusMessage"] = status.Message
-	err := v.errorViewTemplate.ExecuteTemplate(w, filepath.Base(v.view.Layout()), v.mountData)
+	err := v.errorViewTemplate.Execute(w, v.mountData)
 	if err != nil {
 		log.Printf("err rendering error template: %v\n", err)
 		_, errWrite := w.Write([]byte("Something went wrong"))
@@ -202,9 +229,9 @@ func onEvent(w http.ResponseWriter, r *http.Request, v *viewHandler) {
 	}
 
 	store := v.wc.userSessions.getOrCreate(v.user)
-	err = store.Set(v.mountData)
+	err = store.Put(v.mountData)
 	if err != nil {
-		log.Printf("onEvent: store.Set(mountData) err %v\n", err)
+		log.Printf("onEvent: store.Put(mountData) err %v\n", err)
 	}
 
 loop:
@@ -261,33 +288,118 @@ loop:
 	}
 }
 
+// creates a html/template from the View type.
 func parseTemplate(view View) (*template.Template, error) {
-	// layout
-	commonFiles := []string{view.Layout()}
-	// global partials
-	for _, p := range view.Partials() {
-		commonFiles = append(commonFiles, find(p, view.Extensions())...)
-	}
-	layoutTemplate := template.Must(template.New("").Funcs(view.FuncMap()).ParseFiles(commonFiles...))
-
-	pageTemplateClone := template.Must(layoutTemplate.Clone())
-	var pageFiles []string
-	// page and its partials
-	pageFiles = append(pageFiles, find(view.Content(), view.Extensions())...)
-	// contains: 1. layout 2. page  3. partials
-	viewTemplate, err := pageTemplateClone.ParseFiles(pageFiles...)
-	if err != nil {
-		return nil, fmt.Errorf("error parsing files err %v", err)
+	// if both layout and content is empty show a default view.
+	if view.Layout() == "" && view.Content() == "" {
+		return template.Must(template.New("").
+			Parse(`<div style="text-align:center"> This is a default view. </div>`)), nil
 	}
 
+	// if layout is set and content is empty
+	if view.Layout() != "" && view.Content() == "" {
+		var layoutTemplate *template.Template
+		// check if layout is not a file or directory
+		if _, err := os.Stat(view.Layout()); errors.Is(err, os.ErrNotExist) {
+			// is not a file but html content
+			layoutTemplate = template.Must(template.New("").Funcs(view.FuncMap()).Parse(view.Layout()))
+		} else {
+			// layout must be a file
+			ok, err := isDirectory(view.Layout())
+			if err == nil && ok {
+				return nil, fmt.Errorf("layout is a directory but it must be a file")
+			}
+
+			if err != nil {
+				return nil, err
+			}
+			// compile layout
+			commonFiles := []string{view.Layout()}
+			// global partials
+			for _, p := range view.Partials() {
+				commonFiles = append(commonFiles, find(p, view.Extensions())...)
+			}
+			layoutTemplate = template.Must(template.New(view.Layout()).
+				Funcs(view.FuncMap()).
+				ParseFiles(commonFiles...))
+		}
+		return template.Must(layoutTemplate.Clone()), nil
+	}
+
+	// if layout is empty and content is set
+	if view.Layout() == "" && view.Content() != "" {
+		// check if content is a not a file or directory
+		if _, err := os.Stat(view.Content()); errors.Is(err, os.ErrNotExist) {
+			return template.Must(template.New("base").
+				Funcs(view.FuncMap()).
+				Parse(view.Content())), nil
+		} else {
+			// is a file or directory
+			var pageFiles []string
+			// view and its partials
+			pageFiles = append(pageFiles, find(view.Content(), view.Extensions())...)
+			for _, p := range view.Partials() {
+				pageFiles = append(pageFiles, find(p, view.Extensions())...)
+			}
+			return template.Must(template.New(view.Content()).
+				Funcs(view.FuncMap()).
+				ParseFiles(pageFiles...)), nil
+		}
+	}
+
+	// if both layout and content are set
+	var viewTemplate *template.Template
+	// 1. build layout
+	var layoutTemplate *template.Template
+	// check if layout is not a file or directory
+	if _, err := os.Stat(view.Layout()); errors.Is(err, os.ErrNotExist) {
+		// is not a file but html content
+		layoutTemplate = template.Must(template.New("base").Funcs(view.FuncMap()).Parse(view.Layout()))
+	} else {
+		// layout must be a file
+		ok, err := isDirectory(view.Layout())
+		if err == nil && ok {
+			return nil, fmt.Errorf("layout is a directory but it must be a file")
+		}
+
+		if err != nil {
+			return nil, err
+		}
+		// compile layout
+		commonFiles := []string{view.Layout()}
+		// global partials
+		for _, p := range view.Partials() {
+			commonFiles = append(commonFiles, find(p, view.Extensions())...)
+		}
+		layoutTemplate = template.Must(template.New(filepath.Base(view.Layout())).
+			Funcs(view.FuncMap()).
+			ParseFiles(commonFiles...))
+
+		//log.Println("compiled layoutTemplate...")
+		//for _, v := range layoutTemplate.Templates() {
+		//	fmt.Println("template => ", v.Name())
+		//}
+	}
+
+	// 2. add content
+	// check if content is a not a file or directory
+	if _, err := os.Stat(view.Content()); errors.Is(err, os.ErrNotExist) {
+		// content is not a file or directory but html content
+		viewTemplate = template.Must(layoutTemplate.Parse(view.Content()))
+	} else {
+		// content is a file or directory
+		var pageFiles []string
+		// view and its partials
+		pageFiles = append(pageFiles, find(view.Content(), view.Extensions())...)
+
+		viewTemplate = template.Must(layoutTemplate.ParseFiles(pageFiles...))
+	}
+
+	// check if the final viewTemplate contains a content child template which is `content` by default.
 	if ct := viewTemplate.Lookup(view.LayoutContentName()); ct == nil {
 		return nil,
 			fmt.Errorf("err looking up layoutContent: the layout %s expects a template named %s",
 				view.Layout(), view.LayoutContentName())
-	}
-
-	if err != nil {
-		return nil, err
 	}
 
 	return viewTemplate, nil
@@ -342,4 +454,13 @@ func contains(arr []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func isDirectory(path string) (bool, error) {
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+
+	return fileInfo.IsDir(), err
 }
