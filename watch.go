@@ -43,7 +43,7 @@ func watchTemplates(wc *websocketController) {
 
 	for _, templatesPath := range wc.watchPaths {
 		filepath.WalkDir(templatesPath, func(path string, d fs.DirEntry, err error) error {
-			if d.IsDir() {
+			if d != nil && d.IsDir() {
 				log.Println("watching =>", path)
 				return watcher.Add(path)
 			}
