@@ -2,9 +2,9 @@ package controller
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"log"
+	"net/http"
 	"strings"
 )
 
@@ -24,30 +24,27 @@ func (e Event) String() string {
 
 type EventHandler func(ctx Context) error
 
-type Session interface {
-	DOM() DOM
-	Store() SessionStore
-	Temporary(keys ...string)
-}
-
 type Context interface {
 	Event() Event
-	RequestContext() context.Context
-	Session
+	DOM() DOM
+	Store() Store
+	Temporary(keys ...string)
+	Request() *http.Request
+	ResponseWriter() http.ResponseWriter
 }
 
 func (e Event) DecodeParams(v interface{}) error {
 	return json.NewDecoder(bytes.NewReader(e.Params)).Decode(v)
 }
 
-type session struct {
-	topic          string
-	event          Event
-	requestContext context.Context
-	dom            *dom
+type sessionContext struct {
+	event Event
+	dom   *dom
+	r     *http.Request
+	w     http.ResponseWriter
 }
 
-func (s session) setError(userMessage string, errs ...error) {
+func (s sessionContext) setError(userMessage string, errs ...error) {
 	if len(errs) != 0 {
 		var errstrs []string
 		for _, err := range errs {
@@ -63,26 +60,30 @@ func (s session) setError(userMessage string, errs ...error) {
 
 }
 
-func (s session) unsetError() {
+func (s sessionContext) unsetError() {
 	s.dom.Morph("#glv-error", "glv-error", nil)
 }
 
-func (s session) DOM() DOM {
+func (s sessionContext) DOM() DOM {
 	return s.dom
 }
 
-func (s session) Event() Event {
+func (s sessionContext) Event() Event {
 	return s.event
 }
 
-func (s session) RequestContext() context.Context {
-	return s.requestContext
+func (s sessionContext) Request() *http.Request {
+	return s.r
 }
 
-func (s session) Temporary(keys ...string) {
+func (s sessionContext) ResponseWriter() http.ResponseWriter {
+	return s.w
+}
+
+func (s sessionContext) Temporary(keys ...string) {
 	s.dom.temporaryKeys = append(s.dom.temporaryKeys, keys...)
 }
 
-func (s session) Store() SessionStore {
+func (s sessionContext) Store() Store {
 	return s.dom.store
 }

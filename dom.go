@@ -8,8 +8,6 @@ import (
 	"strings"
 
 	"github.com/yosssi/gohtml"
-
-	"github.com/gorilla/websocket"
 )
 
 type Op string
@@ -52,13 +50,11 @@ type DOM interface {
 }
 
 type dom struct {
-	rootTemplate         *template.Template
-	conns                map[string]*websocket.Conn
-	messageType          int
-	store                SessionStore
-	temporaryKeys        []string
-	enableHTMLFormatting bool
-	debugLog             bool
+	rootTemplate  *template.Template
+	store         Store
+	temporaryKeys []string
+	topic         string
+	wc            *websocketController
 }
 
 func (d *dom) SetAttributes(selector string, data M) {
@@ -67,7 +63,7 @@ func (d *dom) SetAttributes(selector string, data M) {
 		Selector: selector,
 		Value:    data,
 	}
-	writePreparedMessage(m.Bytes(), d.conns, d.messageType)
+	d.wc.message(d.topic, m.Bytes())
 	d.setStore(data)
 }
 
@@ -77,7 +73,7 @@ func (d *dom) RemoveAttributes(selector string, data []string) {
 		Selector: selector,
 		Value:    data,
 	}
-	writePreparedMessage(m.Bytes(), d.conns, d.messageType)
+	d.wc.message(d.topic, m.Bytes())
 }
 
 func (d *dom) SetDataset(selector string, data M) {
@@ -94,7 +90,7 @@ func (d *dom) SetDataset(selector string, data M) {
 		Selector: selector,
 		Value:    dataset,
 	}
-	writePreparedMessage(m.Bytes(), d.conns, d.messageType)
+	d.wc.message(d.topic, m.Bytes())
 	d.setStore(data)
 }
 
@@ -110,7 +106,7 @@ func (d *dom) ToggleClassList(selector string, boolData map[string]bool) {
 		Selector: selector,
 		Value:    classList,
 	}
-	writePreparedMessage(m.Bytes(), d.conns, d.messageType)
+	d.wc.message(d.topic, m.Bytes())
 
 	// update inmemStore
 	data := make(map[string]interface{})
@@ -127,7 +123,7 @@ func (d *dom) AddClass(selector, class string) {
 		Selector: selector,
 		Value:    class,
 	}
-	writePreparedMessage(m.Bytes(), d.conns, d.messageType)
+	d.wc.message(d.topic, m.Bytes())
 
 	// update store
 	data := make(map[string]interface{})
@@ -142,7 +138,7 @@ func (d *dom) RemoveClass(selector, class string) {
 		Selector: selector,
 		Value:    class,
 	}
-	writePreparedMessage(m.Bytes(), d.conns, d.messageType)
+	d.wc.message(d.topic, m.Bytes())
 
 	// update store
 	data := make(map[string]interface{})
@@ -157,11 +153,11 @@ func (d *dom) Morph(selector, template string, data M) {
 		log.Printf("err %v with data => \n %+v\n", err, getJSON(data))
 		return
 	}
-	if d.debugLog {
+	if d.wc.debugLog {
 		log.Printf("rendered template %+v, with data => \n %+v\n", template, getJSON(data))
 	}
 	html := buf.String()
-	if d.enableHTMLFormatting {
+	if d.wc.enableHTMLFormatting {
 		html = gohtml.Format(html)
 	}
 	buf.Reset()
@@ -171,7 +167,7 @@ func (d *dom) Morph(selector, template string, data M) {
 		Selector: selector,
 		Value:    html,
 	}
-	writePreparedMessage(m.Bytes(), d.conns, d.messageType)
+	d.wc.message(d.topic, m.Bytes())
 	d.setStore(data)
 }
 
@@ -179,7 +175,7 @@ func (d *dom) Reload() {
 	m := &Operation{
 		Op: Reload,
 	}
-	writePreparedMessage(m.Bytes(), d.conns, d.messageType)
+	d.wc.message(d.topic, m.Bytes())
 }
 
 func (d *dom) setStore(data M) {
@@ -218,21 +214,4 @@ func getJSON(data M) string {
 		return err.Error()
 	}
 	return string(b)
-}
-
-func writePreparedMessage(message []byte, conns map[string]*websocket.Conn, messageType int) {
-	preparedMessage, err := websocket.NewPreparedMessage(messageType, message)
-	if err != nil {
-		log.Printf("err preparing message %v\n", err)
-		return
-	}
-
-	for topic, conn := range conns {
-		err := conn.WritePreparedMessage(preparedMessage)
-		if err != nil {
-			log.Printf("err writing message for topic:%v, %v, closing conn", topic, err)
-			conn.Close()
-			return
-		}
-	}
 }

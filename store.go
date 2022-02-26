@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-type SessionStore interface {
+type Store interface {
 	Put(m M) error
 	Get(key string, data interface{}) error
 }

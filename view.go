@@ -43,12 +43,13 @@ type View interface {
 		 The {{template "content" .}} directive is replaced by the page in the path exposed by `Content`
 	*/
 	Layout() string
-	OnMount(w http.ResponseWriter, r *http.Request) (Status, M)
-	OnEvent(ctx Context) error
 	LayoutContentName() string
 	Partials() []string
 	Extensions() []string
 	FuncMap() template.FuncMap
+	OnMount(ctx Context) (Status, M)
+	OnEvent(ctx Context) error
+	EventReceiver() <-chan Event
 }
 
 type DefaultView struct{}
@@ -59,18 +60,6 @@ func (d DefaultView) Content() string {
 
 func (d DefaultView) Layout() string {
 	return ""
-}
-
-func (d DefaultView) OnMount(w http.ResponseWriter, r *http.Request) (Status, M) {
-	return Status{Code: 200, Message: "ok"}, M{}
-}
-
-func (d DefaultView) OnEvent(ctx Context) error {
-	switch ctx.Event().ID {
-	default:
-		log.Printf("[defaultView] warning:handler not found for event => \n %+v\n", ctx.Event())
-	}
-	return nil
 }
 
 func (d DefaultView) LayoutContentName() string {
@@ -89,6 +78,22 @@ func (d DefaultView) FuncMap() template.FuncMap {
 	return DefaultFuncMap()
 }
 
+func (d DefaultView) OnMount(ctx Context) (Status, M) {
+	return Status{Code: 200, Message: "ok"}, M{}
+}
+
+func (d DefaultView) OnEvent(ctx Context) error {
+	switch ctx.Event().ID {
+	default:
+		log.Printf("[defaultView] warning:handler not found for event => \n %+v\n", ctx.Event())
+	}
+	return nil
+}
+
+func (d DefaultView) EventReceiver() <-chan Event {
+	return nil
+}
+
 type DefaultErrorView struct{}
 
 func (d DefaultErrorView) Content() string {
@@ -102,18 +107,6 @@ func (d DefaultErrorView) Content() string {
 
 func (d DefaultErrorView) Layout() string {
 	return ""
-}
-
-func (d DefaultErrorView) OnMount(w http.ResponseWriter, r *http.Request) (Status, M) {
-	return Status{Code: 500, Message: "Internal Error"}, M{}
-}
-
-func (d DefaultErrorView) OnEvent(ctx Context) error {
-	switch ctx.Event().ID {
-	default:
-		log.Printf("[DefaultErrorView] warning:handler not found for event => \n %+v\n", ctx.Event())
-	}
-	return nil
 }
 
 func (d DefaultErrorView) LayoutContentName() string {
@@ -130,6 +123,22 @@ func (d DefaultErrorView) Extensions() []string {
 
 func (d DefaultErrorView) FuncMap() template.FuncMap {
 	return DefaultFuncMap()
+}
+
+func (d DefaultErrorView) OnMount(ctx Context) (Status, M) {
+	return Status{Code: 500, Message: "Internal Error"}, M{}
+}
+
+func (d DefaultErrorView) OnEvent(ctx Context) error {
+	switch ctx.Event().ID {
+	default:
+		log.Printf("[DefaultErrorView] warning:handler not found for event => \n %+v\n", ctx.Event())
+	}
+	return nil
+}
+
+func (d DefaultErrorView) EventReceiver() <-chan Event {
+	return nil
 }
 
 type viewHandler struct {
@@ -163,21 +172,42 @@ func onMount(w http.ResponseWriter, r *http.Request, v *viewHandler) {
 
 	var err error
 	var status Status
-	status, v.mountData = v.view.OnMount(w, r)
+
+	var topic *string
+	if v.wc.subscribeTopicFunc != nil {
+		topic = v.wc.subscribeTopicFunc(r)
+	}
+	store := v.wc.userSessions.getOrCreate(v.user)
+	sessCtx := sessionContext{
+		dom: &dom{
+			topic:         *topic,
+			wc:            v.wc,
+			store:         store,
+			rootTemplate:  v.viewTemplate,
+			temporaryKeys: []string{"selector", "template"},
+		},
+		event: Event{
+			ID: "onMount",
+		},
+		w: w,
+		r: r,
+	}
+
+	status, v.mountData = v.view.OnMount(sessCtx)
 	if v.mountData == nil {
 		v.mountData = make(M)
 	}
 	v.mountData["app_name"] = v.wc.name
 	w.WriteHeader(status.Code)
 	if status.Code > 299 {
-		onMountError(w, r, v, &status)
+		onMountError(sessCtx, w, v, &status)
 		return
 	}
 	v.viewTemplate.Option("missingkey=zero")
 	err = v.viewTemplate.Execute(w, v.mountData)
 	if err != nil {
 		log.Printf("onMount viewTemplate.Execute error:  %v", err)
-		onMountError(w, r, v, nil)
+		onMountError(sessCtx, w, v, nil)
 	}
 	if v.wc.debugLog {
 		log.Printf("onMount render view %+v, with data => \n %+v\n",
@@ -186,9 +216,9 @@ func onMount(w http.ResponseWriter, r *http.Request, v *viewHandler) {
 
 }
 
-func onMountError(w http.ResponseWriter, r *http.Request, v *viewHandler, status *Status) {
+func onMountError(ctx Context, w http.ResponseWriter, v *viewHandler, status *Status) {
 	var errorStatus Status
-	errorStatus, v.mountData = v.errorView.OnMount(w, r)
+	errorStatus, v.mountData = v.errorView.OnMount(ctx)
 	if v.mountData == nil {
 		v.mountData = make(M)
 	}
@@ -208,10 +238,6 @@ func onMountError(w http.ResponseWriter, r *http.Request, v *viewHandler, status
 }
 
 func onEvent(w http.ResponseWriter, r *http.Request, v *viewHandler) {
-	ctx := r.Context()
-	if v.wc.requestContextFunc != nil {
-		ctx = v.wc.requestContextFunc(r)
-	}
 	var topic *string
 	if v.wc.subscribeTopicFunc != nil {
 		topic = v.wc.subscribeTopicFunc(r)
@@ -234,9 +260,39 @@ func onEvent(w http.ResponseWriter, r *http.Request, v *viewHandler) {
 		log.Printf("onEvent: store.Put(mountData) err %v\n", err)
 	}
 
+	sessCtx := sessionContext{
+		dom: &dom{
+			topic:         *topic,
+			wc:            v.wc,
+			store:         store,
+			rootTemplate:  v.viewTemplate,
+			temporaryKeys: []string{"selector", "template"},
+		},
+		w: w,
+		r: r,
+	}
+	done := make(chan struct{})
+	if v.view.EventReceiver() != nil {
+		go func() {
+			for {
+				select {
+				case event := <-v.view.EventReceiver():
+					sessCtx.event = event
+					err := v.view.OnEvent(sessCtx)
+					if err != nil {
+						log.Printf("[error] \n event => %+v, \n err: %v\n", event, err)
+					}
+				case <-done:
+					return
+				}
+			}
+
+		}()
+	}
+
 loop:
 	for {
-		mt, message, err := c.ReadMessage()
+		_, message, err := c.ReadMessage()
 		if err != nil {
 			log.Println("c.readMessage error: ", err)
 			break loop
@@ -255,34 +311,23 @@ loop:
 		}
 
 		v.reloadTemplates()
-		sess := session{
-			dom: &dom{
-				messageType:          mt,
-				conns:                v.wc.getTopicConnections(*topic),
-				store:                store,
-				rootTemplate:         v.viewTemplate,
-				temporaryKeys:        []string{"selector", "template"},
-				enableHTMLFormatting: v.wc.enableHTMLFormatting,
-				debugLog:             v.wc.debugLog,
-			},
-			event:          *event,
-			requestContext: ctx,
-		}
-
-		sess.unsetError()
+		sessCtx.event = *event
+		sessCtx.unsetError()
 
 		var eventHandlerErr error
 		if v.wc.debugLog {
-			log.Printf("[controller] received event %+v \n", sess.event)
+			log.Printf("[controller] received event %+v \n", sessCtx.event)
 		}
-		eventHandlerErr = v.view.OnEvent(sess)
+		eventHandlerErr = v.view.OnEvent(sessCtx)
 
 		if eventHandlerErr != nil {
 			log.Printf("[error] \n event => %+v, \n err: %v\n", event, eventHandlerErr)
-			sess.setError(UserError(eventHandlerErr), eventHandlerErr)
+			sessCtx.setError(UserError(eventHandlerErr), eventHandlerErr)
 		}
 	}
-
+	if v.view.EventReceiver() != nil {
+		done <- struct{}{}
+	}
 	if topic != nil {
 		v.wc.removeConnection(*topic, connID)
 	}

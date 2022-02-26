@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/gorilla/websocket"
-
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -29,7 +27,7 @@ func watchTemplates(wc *websocketController) {
 					event.Op&fsnotify.Remove == fsnotify.Remove ||
 					event.Op&fsnotify.Create == fsnotify.Create {
 					m := &Operation{Op: Reload}
-					writePreparedMessage(m.Bytes(), wc.getAllConnections(), websocket.TextMessage)
+					wc.messageAll(m.Bytes())
 					time.Sleep(1000 * time.Millisecond)
 				}
 			case err, ok := <-watcher.Errors:

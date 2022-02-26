@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -20,7 +19,6 @@ type Controller interface {
 }
 
 type controlOpt struct {
-	requestContextFunc func(r *http.Request) context.Context
 	subscribeTopicFunc func(r *http.Request) *string
 	upgrader           websocket.Upgrader
 
@@ -34,12 +32,6 @@ type controlOpt struct {
 }
 
 type Option func(*controlOpt)
-
-func WithRequestContext(f func(r *http.Request) context.Context) Option {
-	return func(o *controlOpt) {
-		o.requestContextFunc = f
-	}
-}
 
 func WithSubscribeTopic(f func(r *http.Request) *string) Option {
 	return func(o *controlOpt) {
@@ -98,16 +90,13 @@ func Websocket(name string, options ...Option) Controller {
 	}
 
 	o := &controlOpt{
-		requestContextFunc: nil,
 		subscribeTopicFunc: func(r *http.Request) *string {
-			challengeKey := r.Header.Get("Sec-Websocket-Key")
-			topic := fmt.Sprintf("root_%s", challengeKey)
+			topic := "root"
 			if r.URL.Path != "/" {
-				topic = fmt.Sprintf("%s_%s",
-					strings.Replace(r.URL.Path, "/", "_", -1), challengeKey)
+				topic = strings.Replace(r.URL.Path, "/", "_", -1)
 			}
 
-			log.Println("client subscribed to topic", topic)
+			log.Println("client subscribed to topic: ", topic)
 			return &topic
 		},
 		upgrader:   websocket.Upgrader{EnableCompression: true},
@@ -125,7 +114,7 @@ func Websocket(name string, options ...Option) Controller {
 		controlOpt:       *o,
 		name:             name,
 		userSessions: userSessions{
-			stores: make(map[int]SessionStore),
+			stores: make(map[int]Store),
 		},
 	}
 	log.Println("controller starting in developer mode ...", wc.developmentMode)
@@ -155,11 +144,11 @@ func (u *userCount) incr() int {
 }
 
 type userSessions struct {
-	stores map[int]SessionStore
+	stores map[int]Store
 	sync.RWMutex
 }
 
-func (u *userSessions) getOrCreate(key int) SessionStore {
+func (u *userSessions) getOrCreate(key int) Store {
 	u.Lock()
 	defer u.Unlock()
 	s, ok := u.stores[key]
@@ -239,6 +228,52 @@ func (wc *websocketController) getAllConnections() map[string]*websocket.Conn {
 	}
 
 	return conns
+}
+
+func (wc *websocketController) message(topic string, message []byte) {
+	wc.Lock()
+	defer wc.Unlock()
+	preparedMessage, err := websocket.NewPreparedMessage(websocket.TextMessage, message)
+	if err != nil {
+		log.Printf("err preparing message %v\n", err)
+		return
+	}
+
+	conns, ok := wc.topicConnections[topic]
+	if !ok {
+		log.Printf("warn: topic %v doesn't exist\n", topic)
+		return
+	}
+
+	for connID, conn := range conns {
+		err := conn.WritePreparedMessage(preparedMessage)
+		if err != nil {
+			log.Printf("error: writing message for topic:%v, closing conn %s with err %v", topic, connID, err)
+			conn.Close()
+			continue
+		}
+	}
+}
+
+func (wc *websocketController) messageAll(message []byte) {
+	wc.Lock()
+	defer wc.Unlock()
+	preparedMessage, err := websocket.NewPreparedMessage(websocket.TextMessage, message)
+	if err != nil {
+		log.Printf("err preparing message %v\n", err)
+		return
+	}
+
+	for _, cm := range wc.topicConnections {
+		for connID, conn := range cm {
+			err := conn.WritePreparedMessage(preparedMessage)
+			if err != nil {
+				log.Printf("error: writing message %v, closing conn %s with err %v", message, connID, err)
+				conn.Close()
+				continue
+			}
+		}
+	}
 }
 
 func (wc *websocketController) getUser(w http.ResponseWriter, r *http.Request) (int, error) {
