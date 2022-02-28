@@ -100,7 +100,7 @@ func Websocket(name string, options ...Option) Controller {
 			return &topic
 		},
 		upgrader:   websocket.Upgrader{EnableCompression: true},
-		watchPaths: []string{"./templates"},
+		watchPaths: []string{"./templates", "."},
 		errorView:  &DefaultErrorView{},
 	}
 
