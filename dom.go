@@ -21,6 +21,8 @@ const (
 	Reload           Op = "reload"
 	AddClass         Op = "addClass"
 	RemoveClass      Op = "removeClass"
+	SetValue         Op = "setValue"
+	SetInnerHTML     Op = "setInnerHTML"
 )
 
 type Operation struct {
@@ -41,6 +43,8 @@ func (m *Operation) Bytes() []byte {
 type DOM interface {
 	SetDataset(selector string, data M)
 	SetAttributes(selector string, data M)
+	SetValue(selector string, value interface{})
+	SetInnerHTML(selector string, value interface{})
 	RemoveAttributes(selector string, data []string)
 	ToggleClassList(selector string, classList map[string]bool)
 	AddClass(selector, class string)
@@ -144,6 +148,31 @@ func (d *dom) RemoveClass(selector, class string) {
 	data := make(map[string]interface{})
 	data[class] = false
 	d.setStore(data)
+}
+
+func (d *dom) SetValue(selector string, value interface{}) {
+
+	m := &Operation{
+		Op:       SetValue,
+		Selector: selector,
+		Value:    value,
+	}
+	d.wc.message(d.topic, m.Bytes())
+
+	// update store
+	data := make(map[string]interface{})
+	data[strings.TrimPrefix(selector, "#")] = value
+	d.setStore(data)
+}
+
+func (d *dom) SetInnerHTML(selector string, value interface{}) {
+
+	m := &Operation{
+		Op:       SetInnerHTML,
+		Selector: selector,
+		Value:    value,
+	}
+	d.wc.message(d.topic, m.Bytes())
 }
 
 func (d *dom) Morph(selector, template string, data M) {
