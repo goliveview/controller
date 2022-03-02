@@ -198,6 +198,7 @@ func onMount(w http.ResponseWriter, r *http.Request, v *viewHandler) {
 		v.mountData = make(M)
 	}
 	v.mountData["app_name"] = v.wc.name
+	v.mountData["url_path"] = r.URL.Path
 	w.WriteHeader(status.Code)
 	if status.Code > 299 {
 		onMountError(sessCtx, w, v, &status)
