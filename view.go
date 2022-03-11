@@ -48,8 +48,8 @@ type View interface {
 	Extensions() []string
 	FuncMap() template.FuncMap
 	OnMount(ctx Context) (Status, M)
-	OnEvent(ctx Context) error
-	EventReceiver() <-chan Event
+	OnLiveEvent(ctx Context) error
+	LiveEventReceiver() <-chan Event
 }
 
 type DefaultView struct{}
@@ -82,7 +82,7 @@ func (d DefaultView) OnMount(ctx Context) (Status, M) {
 	return Status{Code: 200, Message: "ok"}, M{}
 }
 
-func (d DefaultView) OnEvent(ctx Context) error {
+func (d DefaultView) OnLiveEvent(ctx Context) error {
 	switch ctx.Event().ID {
 	default:
 		log.Printf("[defaultView] warning:handler not found for event => \n %+v\n", ctx.Event())
@@ -90,7 +90,7 @@ func (d DefaultView) OnEvent(ctx Context) error {
 	return nil
 }
 
-func (d DefaultView) EventReceiver() <-chan Event {
+func (d DefaultView) LiveEventReceiver() <-chan Event {
 	return nil
 }
 
@@ -129,7 +129,7 @@ func (d DefaultErrorView) OnMount(ctx Context) (Status, M) {
 	return Status{Code: 500, Message: "Internal Error"}, M{}
 }
 
-func (d DefaultErrorView) OnEvent(ctx Context) error {
+func (d DefaultErrorView) OnLiveEvent(ctx Context) error {
 	switch ctx.Event().ID {
 	default:
 		log.Printf("[DefaultErrorView] warning:handler not found for event => \n %+v\n", ctx.Event())
@@ -137,7 +137,7 @@ func (d DefaultErrorView) OnEvent(ctx Context) error {
 	return nil
 }
 
-func (d DefaultErrorView) EventReceiver() <-chan Event {
+func (d DefaultErrorView) LiveEventReceiver() <-chan Event {
 	return nil
 }
 
@@ -273,13 +273,13 @@ func onEvent(w http.ResponseWriter, r *http.Request, v *viewHandler) {
 		r: r,
 	}
 	done := make(chan struct{})
-	if v.view.EventReceiver() != nil {
+	if v.view.LiveEventReceiver() != nil {
 		go func() {
 			for {
 				select {
-				case event := <-v.view.EventReceiver():
+				case event := <-v.view.LiveEventReceiver():
 					sessCtx.event = event
-					err := v.view.OnEvent(sessCtx)
+					err := v.view.OnLiveEvent(sessCtx)
 					if err != nil {
 						log.Printf("[error] \n event => %+v, \n err: %v\n", event, err)
 					}
@@ -319,14 +319,14 @@ loop:
 		if v.wc.debugLog {
 			log.Printf("[controller] received event %+v \n", sessCtx.event)
 		}
-		eventHandlerErr = v.view.OnEvent(sessCtx)
+		eventHandlerErr = v.view.OnLiveEvent(sessCtx)
 
 		if eventHandlerErr != nil {
 			log.Printf("[error] \n event => %+v, \n err: %v\n", event, eventHandlerErr)
 			sessCtx.setError(UserError(eventHandlerErr), eventHandlerErr)
 		}
 	}
-	if v.view.EventReceiver() != nil {
+	if v.view.LiveEventReceiver() != nil {
 		done <- struct{}{}
 	}
 	if topic != nil {
