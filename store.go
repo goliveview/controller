@@ -16,7 +16,7 @@ type inmemStore struct {
 	sync.RWMutex
 }
 
-func (s inmemStore) Put(m M) error {
+func (s *inmemStore) Put(m M) error {
 	s.Lock()
 	defer s.Unlock()
 	for k, v := range m {
@@ -29,7 +29,7 @@ func (s inmemStore) Put(m M) error {
 	return nil
 }
 
-func (s inmemStore) Get(key string, v interface{}) error {
+func (s *inmemStore) Get(key string, v interface{}) error {
 	s.RLock()
 	defer s.RUnlock()
 	data, ok := s.data[key]

@@ -83,9 +83,7 @@ func (d *dom) RemoveAttributes(selector string, data []string) {
 func (d *dom) SetDataset(selector string, data M) {
 	dataset := make(map[string]interface{})
 	for k, v := range data {
-		if strings.HasPrefix(k, "data-") {
-			k = strings.TrimPrefix(k, "data-")
-		}
+		k = strings.TrimPrefix(k, "data-")
 		dataset[kebabToCamelCase(k)] = v
 	}
 

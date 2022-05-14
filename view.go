@@ -261,9 +261,14 @@ func onEvent(w http.ResponseWriter, r *http.Request, v *viewHandler) {
 		log.Printf("onEvent: store.Put(mountData) err %v\n", err)
 	}
 
+	topicVal := ""
+	if topic != nil {
+		topicVal = *topic
+	}
+
 	sessCtx := sessionContext{
 		dom: &dom{
-			topic:         *topic,
+			topic:         topicVal,
 			wc:            v.wc,
 			store:         store,
 			rootTemplate:  v.viewTemplate,

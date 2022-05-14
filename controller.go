@@ -206,30 +206,6 @@ func (wc *websocketController) removeConnection(topic, connID string) {
 	log.Println("removeConnection", topic, connID, len(wc.topicConnections[topic]))
 }
 
-func (wc *websocketController) getTopicConnections(topic string) map[string]*websocket.Conn {
-	wc.Lock()
-	defer wc.Unlock()
-	connMap, ok := wc.topicConnections[topic]
-	if !ok {
-		log.Printf("warn: topic %v doesn't exist\n", topic)
-		return map[string]*websocket.Conn{}
-	}
-	return connMap
-}
-
-func (wc *websocketController) getAllConnections() map[string]*websocket.Conn {
-	wc.Lock()
-	defer wc.Unlock()
-	conns := make(map[string]*websocket.Conn)
-	for _, cm := range wc.topicConnections {
-		for k, m := range cm {
-			conns[k] = m
-		}
-	}
-
-	return conns
-}
-
 func (wc *websocketController) message(topic string, message []byte) {
 	wc.Lock()
 	defer wc.Unlock()
