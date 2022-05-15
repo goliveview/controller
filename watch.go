@@ -44,7 +44,7 @@ func watchTemplates(wc *websocketController) {
 	}()
 
 	// watch extensions
-	filepath.WalkDir(wc.watchRootDir, func(path string, d fs.DirEntry, err error) error {
+	filepath.WalkDir(wc.projectRoot, func(path string, d fs.DirEntry, err error) error {
 		if d != nil && !d.IsDir() {
 			if slices.Contains(wc.watchExts, filepath.Ext(path)) {
 				if strings.Contains(path, "node_modules") {

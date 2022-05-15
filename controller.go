@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -27,7 +28,7 @@ type controlOpt struct {
 	debugLog             bool
 	enableWatch          bool
 	watchExts            []string
-	watchRootDir         string
+	projectRoot          string
 	developmentMode      bool
 	errorView            View
 }
@@ -74,7 +75,7 @@ func EnableWatch(rootDir string, extensions ...string) Option {
 	return func(o *controlOpt) {
 		o.enableWatch = true
 		if len(extensions) > 0 {
-			o.watchRootDir = rootDir
+			o.projectRoot = rootDir
 			o.watchExts = extensions
 		}
 	}
@@ -91,6 +92,12 @@ func Websocket(name string, options ...Option) Controller {
 		panic("controller name is required")
 	}
 
+	var projectRoot string
+	projectRootUsage := "project root directory that contains the template files."
+	flag.StringVar(&projectRoot, "project", ".", projectRootUsage)
+	flag.StringVar(&projectRoot, "p", ".", projectRootUsage+" (shortand)")
+	flag.Parse()
+
 	o := &controlOpt{
 		subscribeTopicFunc: func(r *http.Request) *string {
 			topic := "root"
@@ -101,10 +108,10 @@ func Websocket(name string, options ...Option) Controller {
 			log.Println("client subscribed to topic: ", topic)
 			return &topic
 		},
-		upgrader:     websocket.Upgrader{EnableCompression: true},
-		watchExts:    DefaultWatchExtensions,
-		watchRootDir: ".",
-		errorView:    &DefaultErrorView{},
+		upgrader:    websocket.Upgrader{EnableCompression: true},
+		watchExts:   DefaultWatchExtensions,
+		projectRoot: projectRoot,
+		errorView:   &DefaultErrorView{},
 	}
 
 	for _, option := range options {
@@ -275,12 +282,12 @@ func (wc *websocketController) getUser(w http.ResponseWriter, r *http.Request) (
 }
 
 func (wc *websocketController) Handler(view View) http.HandlerFunc {
-	viewTemplate, err := parseTemplate(view)
+	viewTemplate, err := parseTemplate(wc.projectRoot, view)
 	if err != nil {
 		panic(err)
 	}
 
-	errorViewTemplate, err := parseTemplate(wc.errorView)
+	errorViewTemplate, err := parseTemplate(wc.projectRoot, wc.errorView)
 	if err != nil {
 		panic(err)
 	}
