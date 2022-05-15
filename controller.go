@@ -26,7 +26,8 @@ type controlOpt struct {
 	disableTemplateCache bool
 	debugLog             bool
 	enableWatch          bool
-	watchPaths           []string
+	watchExts            []string
+	watchRootDir         string
 	developmentMode      bool
 	errorView            View
 }
@@ -69,11 +70,12 @@ func EnableDebugLog() Option {
 	}
 }
 
-func EnableWatch(paths ...string) Option {
+func EnableWatch(rootDir string, extensions ...string) Option {
 	return func(o *controlOpt) {
 		o.enableWatch = true
-		if len(paths) > 0 {
-			o.watchPaths = paths
+		if len(extensions) > 0 {
+			o.watchRootDir = rootDir
+			o.watchExts = extensions
 		}
 	}
 }
@@ -99,9 +101,10 @@ func Websocket(name string, options ...Option) Controller {
 			log.Println("client subscribed to topic: ", topic)
 			return &topic
 		},
-		upgrader:   websocket.Upgrader{EnableCompression: true},
-		watchPaths: []string{"./templates", "."},
-		errorView:  &DefaultErrorView{},
+		upgrader:     websocket.Upgrader{EnableCompression: true},
+		watchExts:    DefaultWatchExtensions,
+		watchRootDir: ".",
+		errorView:    &DefaultErrorView{},
 	}
 
 	for _, option := range options {
@@ -300,7 +303,7 @@ func (wc *websocketController) Handler(view View) http.HandlerFunc {
 		}
 		if r.Header.Get("Connection") == "Upgrade" &&
 			r.Header.Get("Upgrade") == "websocket" {
-			onEvent(w, r, v)
+			onLiveEvent(w, r, v)
 		} else {
 			onMount(w, r, v)
 		}

@@ -4,10 +4,14 @@ import (
 	"io/fs"
 	"log"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"golang.org/x/exp/slices"
 )
+
+var DefaultWatchExtensions = []string{".go", ".gohtml", ".gotmpl", ".html", ".tmpl"}
 
 func watchTemplates(wc *websocketController) {
 	watcher, err := fsnotify.NewWatcher()
@@ -39,15 +43,19 @@ func watchTemplates(wc *websocketController) {
 		}
 	}()
 
-	for _, templatesPath := range wc.watchPaths {
-		filepath.WalkDir(templatesPath, func(path string, d fs.DirEntry, err error) error {
-			if d != nil && d.IsDir() {
+	// watch extensions
+	filepath.WalkDir(wc.watchRootDir, func(path string, d fs.DirEntry, err error) error {
+		if d != nil && !d.IsDir() {
+			if slices.Contains(wc.watchExts, filepath.Ext(path)) {
+				if strings.Contains(path, "node_modules") {
+					return nil
+				}
 				log.Println("watching =>", path)
 				return watcher.Add(path)
 			}
-			return nil
-		})
-	}
+		}
+		return nil
+	})
 
 	<-done
 }

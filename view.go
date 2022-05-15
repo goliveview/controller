@@ -15,33 +15,15 @@ import (
 	"github.com/lithammer/shortuuid"
 )
 
+var DefaultViewExtensions = []string{".gohtml", ".gotmpl", ".html", ".tmpl"}
+
 type Status struct {
 	Code    int    `json:"statusCode"`
 	Message string `json:"statusMessage"`
 }
 
 type View interface {
-	// Content represents the path to the html page content
 	Content() string
-	// Layout represents the path to the base layout to be used.
-	/*
-			layout.html e.g.
-			<!DOCTYPE html>
-			<html lang="en">
-			<head>
-				<title>{{.app_name}}</title>
-				{{template "header" .}}
-			</head>
-			<body>
-			{{template "navbar" .}}
-			<div>
-				{{template "content" .}}
-			</div>
-			{{template "footer" .}}
-			</body>
-			</html>
-		 The {{template "content" .}} directive is replaced by the page in the path exposed by `Content`
-	*/
 	Layout() string
 	LayoutContentName() string
 	Partials() []string
@@ -54,34 +36,75 @@ type View interface {
 
 type DefaultView struct{}
 
+// Content returns either path to the content or a html string content
 func (d DefaultView) Content() string {
 	return ""
 }
 
+// Layout returns either path to the layout or a html string layout
+// Layout represents the path to the base layout to be used.
+/*
+		layout.html e.g.
+		<!DOCTYPE html>
+		<html lang="en">
+		<head>
+			<title>{{.app_name}}</title>
+			{{template "header" .}}
+		</head>
+		<body>
+		{{template "navbar" .}}
+		<div>
+			{{template "content" .}}
+		</div>
+		{{template "footer" .}}
+		</body>
+		</html>
+	 The {{template "content" .}} directive is replaced by the page in the path exposed by `Content`
+*/
 func (d DefaultView) Layout() string {
 	return ""
 }
 
+// LayoutContentName is the defined template of the "content" to be replaced. Defaults to "content"
+/*
+e.g.
+type SimpleView struct {
+	glv.DefaultView
+}
+
+func (s *SimpleView) Content() string {
+	return `{{define "content"}}<div>world</div>{{ end }}`
+}
+
+func (s *SimpleView) Layout() string {
+	return `<div>Hello: {{template "content" .}}</div>`
+}
+*/
 func (d DefaultView) LayoutContentName() string {
 	return "content"
 }
 
+// Partials returns path to any partials used in the view. Defaults to "./templates/partials"
 func (d DefaultView) Partials() []string {
 	return []string{"./templates/partials"}
 }
 
+// Extensions returns the view extensions. Defaults to: html, tmpl, gohtml, gotmpl
 func (d DefaultView) Extensions() []string {
-	return []string{".html", ".tmpl"}
+	return DefaultViewExtensions
 }
 
+// FuncMap configures the html/template.FuncMap
 func (d DefaultView) FuncMap() template.FuncMap {
 	return DefaultFuncMap()
 }
 
+// OnMount is called when the page is first loaded for the http route.
 func (d DefaultView) OnMount(ctx Context) (Status, M) {
 	return Status{Code: 200, Message: "ok"}, M{}
 }
 
+// OnLiveEvent handles the events sent from the browser or received on the LiveEventReceiver channel
 func (d DefaultView) OnLiveEvent(ctx Context) error {
 	switch ctx.Event().ID {
 	default:
@@ -90,6 +113,8 @@ func (d DefaultView) OnLiveEvent(ctx Context) error {
 	return nil
 }
 
+// LiveEventReceiver is used to configure a receive only channel for receiving events from concurrent goroutines.
+// e.g. a concurrent goroutine sends a tick event every second to the returned channel which is then handled in OnLiveEvent.
 func (d DefaultView) LiveEventReceiver() <-chan Event {
 	return nil
 }
@@ -118,7 +143,7 @@ func (d DefaultErrorView) Partials() []string {
 }
 
 func (d DefaultErrorView) Extensions() []string {
-	return []string{".html", ".tmpl"}
+	return DefaultViewExtensions
 }
 
 func (d DefaultErrorView) FuncMap() template.FuncMap {
@@ -238,7 +263,7 @@ func onMountError(ctx Context, w http.ResponseWriter, v *viewHandler, status *St
 	}
 }
 
-func onEvent(w http.ResponseWriter, r *http.Request, v *viewHandler) {
+func onLiveEvent(w http.ResponseWriter, r *http.Request, v *viewHandler) {
 	var topic *string
 	if v.wc.subscribeTopicFunc != nil {
 		topic = v.wc.subscribeTopicFunc(r)
@@ -258,7 +283,7 @@ func onEvent(w http.ResponseWriter, r *http.Request, v *viewHandler) {
 	store := v.wc.userSessions.getOrCreate(v.user)
 	err = store.Put(v.mountData)
 	if err != nil {
-		log.Printf("onEvent: store.Put(mountData) err %v\n", err)
+		log.Printf("onLiveEvent: store.Put(mountData) err %v\n", err)
 	}
 
 	topicVal := ""
